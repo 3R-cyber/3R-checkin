@@ -1,4 +1,4 @@
-<title>3RI 출퇴근</title>
+<title>3R 출퇴근</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Gowun+Sans:wght@400;600;800&family=Noto+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
@@ -532,7 +532,7 @@
   function Topbar(){
     var clockEl = el("span",{class:"clock num"},[HHMM()+":"+String(new Date().getSeconds()).padStart(2,"0")]);
     return el("div",{class:"topbar"},[
-      el("div",{class:"brand"},[el("span",{class:"dot"}), el("span",{class:"brand-name"},["3RI 출퇴근"])]),
+      el("div",{class:"brand"},[el("span",{class:"dot"}), el("span",{class:"brand-name"},["3R 출퇴근"])]),
       clockEl
     ]);
   }
