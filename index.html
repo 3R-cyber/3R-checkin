@@ -198,7 +198,8 @@
     adminRows: [],             // flattened rows for current admin month
     adminLoading: false,
     empDraftId: null,
-    bulkAddOpen: false
+    bulkAddOpen: false,
+    adminSelected: {}
   };
 
   function haversine(lat1,lng1,lat2,lng2){
@@ -391,7 +392,7 @@
 
   async function loadAdminMonth(){
     if(!db || state.employees.length===0){ state.adminRows=[]; return; }
-    state.adminLoading = true; render();
+    state.adminLoading = true; state.adminSelected = {}; render();
     var month = state.adminMonth;
     try{
       var snaps = await Promise.all(state.employees.map(function(e){
@@ -435,6 +436,36 @@
       toast("삭제되었어요.");
       loadAdminMonth();
     }catch(e){ toast("삭제에 실패했어요. 관리자 권한이 있는 계정인지 확인해주세요."); }
+  }
+
+  function rowKey(r){ return r._docId + "#" + r._idx; }
+
+  async function adminBulkDeleteRecords(){
+    var keys = Object.keys(state.adminSelected).filter(function(k){ return state.adminSelected[k]; });
+    if(!keys.length){ toast("선택된 기록이 없어요."); return; }
+    if(!confirm(keys.length+"건을 삭제할까요? 되돌릴 수 없어요.")) return;
+
+    var byDoc = {};
+    keys.forEach(function(k){
+      var parts = k.split("#");
+      var docId = parts[0], idx = parseInt(parts[1], 10);
+      (byDoc[docId] = byDoc[docId] || []).push(idx);
+    });
+
+    try{
+      await Promise.all(Object.keys(byDoc).map(async function(docId){
+        var ref = db.doc("checkins/"+docId);
+        var snap = await ref.get();
+        if(!snap.exists) return;
+        var records = snap.data().records.slice();
+        var idxs = byDoc[docId].sort(function(a,b){ return b-a; }); // descending so splice doesn't shift earlier indices
+        idxs.forEach(function(idx){ records.splice(idx, 1); });
+        await ref.update({ records: records });
+      }));
+      toast(keys.length+"건 삭제되었어요.");
+      state.adminSelected = {};
+      loadAdminMonth();
+    }catch(e){ toast("일괄 삭제에 실패했어요. 관리자 권한이 있는 계정인지 확인해주세요."); }
   }
 
   async function adminSaveSettings(draft){
@@ -690,14 +721,27 @@
       el("option",{value:"daejeon", selected:state.adminSiteFilter==="daejeon"},["대전"])
     ]);
     var rows = state.adminRows.filter(function(r){ return state.adminSiteFilter==="all" || r.site===state.adminSiteFilter; });
+    var selectedCount = rows.filter(function(r){ return state.adminSelected[rowKey(r)]; }).length;
+    var allSelected = rows.length>0 && selectedCount===rows.length;
+
+    var selectAllCb = el("input",{type:"checkbox", checked:allSelected,
+      onchange:function(ev){
+        var v = ev.target.checked;
+        rows.forEach(function(r){ state.adminSelected[rowKey(r)] = v; });
+        render();
+      }});
 
     var tbody = rows.map(function(r){
+      var key = rowKey(r);
       var timeInput = el("input",{type:"time", value:r.time, style:"width:96px;padding:5px 6px;font-size:12px;",
         onchange:function(ev){ adminUpdateRecord(r, { time: ev.target.value }); }});
       var statusSel = el("select",{style:"width:78px;padding:5px 6px;font-size:12px;",
         onchange:function(ev){ adminUpdateRecord(r, { status: ev.target.value }); }},
         ["정상","지각","조퇴"].map(function(s){ return el("option",{value:s, selected:r.status===s},[s]); }));
+      var cb = el("input",{type:"checkbox", checked:!!state.adminSelected[key],
+        onchange:function(ev){ state.adminSelected[key] = ev.target.checked; render(); }});
       return el("tr",{},[
+        el("td",{},[cb]),
         el("td",{},[r.date]),
         el("td",{},[r.name]),
         el("td",{},[el("span",{class:"badge-site"},[state.config.sites[r.site]?state.config.sites[r.site].label:r.site])]),
@@ -712,17 +756,23 @@
     return el("div",{class:"card"},[
       el("div",{class:"row", style:"flex-wrap:wrap;"},[
         el("h3",{style:"font-size:15px;"},["출퇴근 기록"]),
-        el("div",{class:"row", style:"gap:8px;flex:none;"},[monthInput, siteSel])
+        el("div",{class:"row", style:"gap:8px;flex:none;"},[
+          monthInput, siteSel,
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ loadAdminMonth(); }},["새로고침"])
+        ])
       ]),
       state.adminLoading ? el("div",{class:"muted"},["불러오는 중…"]) :
         rows.length===0 ? el("div",{class:"muted"},["이 달 기록이 없어요."]) :
         el("div",{class:"tablewrap"},[el("table",{},[
-          el("thead",{},[el("tr",{},["날짜","이름","지점","구분","시각","상태","거리",""].map(function(h){ return el("th",{},[h]); }))]),
+          el("thead",{},[el("tr",{}, [el("th",{},[selectAllCb])].concat(["날짜","이름","지점","구분","시각","상태","거리",""].map(function(h){ return el("th",{},[h]); })))]),
           el("tbody",{}, tbody)
         ])]),
       el("div",{class:"row"},[
-        el("span",{class:"faint"},[rows.length+"건"]),
-        el("button",{class:"btn btn-ghost btn-sm", onclick:exportExcel},["엑셀로 내보내기"])
+        el("span",{class:"faint"},[rows.length+"건"+(selectedCount?" · "+selectedCount+"건 선택됨":"")]),
+        el("div",{class:"row", style:"gap:8px;flex:none;"},[
+          selectedCount ? el("button",{class:"btn btn-danger btn-sm", onclick:adminBulkDeleteRecords},["선택 삭제 ("+selectedCount+")"]) : null,
+          el("button",{class:"btn btn-ghost btn-sm", onclick:exportExcel},["엑셀로 내보내기"])
+        ])
       ])
     ]);
   }
