@@ -1,0 +1,808 @@
+<title>3RI 출퇴근</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gowun+Sans:wght@400;600;800&family=Noto+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0E7C86">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#F4F6F8; --surface:#FFFFFF; --surface-2:#EDF1F3; --border:#DDE3E8;
+    --ink:#16202B; --ink-muted:#5C6B78; --ink-faint:#8B98A3;
+    --accent:#0E7C86; --accent-ink:#FFFFFF; --accent-soft:#E1F1F1;
+    --ok:#1D9D5B; --ok-soft:#E4F8ED;
+    --warn:#C6790A; --warn-soft:#FBEDD9;
+    --bad:#D6473F; --bad-soft:#FBE7E5;
+    --shadow: 0 1px 2px rgba(20,30,40,.04), 0 8px 20px -12px rgba(20,30,40,.18);
+    --font-head:'Gowun Sans', 'Noto Sans KR', sans-serif;
+    --font-body:'Noto Sans KR', -apple-system, sans-serif;
+    --font-mono:'JetBrains Mono', ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#10161C; --surface:#1A222B; --surface-2:#212B35; --border:#2C3743;
+      --ink:#ECF1F4; --ink-muted:#9FAEBA; --ink-faint:#71818D;
+      --accent:#3FC1CB; --accent-ink:#08262A; --accent-soft:#173339;
+      --ok:#49C787; --ok-soft:#123625;
+      --warn:#E2A23D; --warn-soft:#3A2C10;
+      --bad:#F0736B; --bad-soft:#3A1917;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10161C; --surface:#1A222B; --surface-2:#212B35; --border:#2C3743;
+    --ink:#ECF1F4; --ink-muted:#9FAEBA; --ink-faint:#71818D;
+    --accent:#3FC1CB; --accent-ink:#08262A; --accent-soft:#173339;
+    --ok:#49C787; --ok-soft:#123625;
+    --warn:#E2A23D; --warn-soft:#3A2C10;
+    --bad:#F0736B; --bad-soft:#3A1917;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink); font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased; padding-inline:16px; padding-block:24px 48px;
+  }
+  h1,h2,h3{font-family:var(--font-head); text-wrap:balance; margin:0;}
+  .num{font-family:var(--font-mono); font-variant-numeric:tabular-nums;}
+  #app{max-width:480px; margin:0 auto; display:flex; flex-direction:column; gap:14px;}
+  #app.wide{max-width:960px;}
+  a{color:var(--accent);}
+  button{font:inherit; cursor:pointer;}
+  .topbar{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+  .brand{display:flex; align-items:center; gap:9px;}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);flex:none;}
+  .brand-name{font-family:var(--font-head); font-weight:800; font-size:17px; letter-spacing:.2px;}
+  .clock{font-family:var(--font-mono); font-size:13px; color:var(--ink-muted);}
+  .tabbar{display:flex; gap:6px; background:var(--surface-2); border:1px solid var(--border); border-radius:12px; padding:4px;}
+  .tabbar button{flex:1; border:none; background:transparent; color:var(--ink-muted); font-weight:600; font-size:13px; padding:9px 8px; border-radius:9px; transition:background .15s,color .15s;}
+  .tabbar button.active{background:var(--surface); color:var(--ink); box-shadow:var(--shadow);}
+  .card{background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:20px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:12px;}
+  .card-tight{padding:14px 16px; gap:8px;}
+  .muted{color:var(--ink-muted); font-size:13px; line-height:1.55;}
+  .faint{color:var(--ink-faint); font-size:12px;}
+  .row{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+  .col{display:flex; flex-direction:column; gap:4px;}
+  .pill{display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; white-space:nowrap;}
+  .pill-ok{background:var(--ok-soft); color:var(--ok);}
+  .pill-warn{background:var(--warn-soft); color:var(--warn);}
+  .pill-bad{background:var(--bad-soft); color:var(--bad);}
+  .pill-neutral{background:var(--surface-2); color:var(--ink-muted);}
+  select,input[type=text],input[type=number],input[type=time],input[type=password],input[type=email],textarea{
+    width:100%; font:inherit; font-size:15px; padding:11px 12px; border-radius:10px;
+    border:1px solid var(--border); background:var(--surface); color:var(--ink);
+  }
+  textarea{resize:vertical; min-height:90px; font-size:13px; line-height:1.6;}
+  label.field{display:flex; flex-direction:column; gap:6px; font-size:13px; font-weight:600; color:var(--ink-muted);}
+  .btn{border:none; border-radius:12px; padding:15px 18px; font-weight:700; font-size:15px; text-align:center;}
+  .btn-primary{background:var(--accent); color:var(--accent-ink);}
+  .btn-primary:disabled{opacity:.45; cursor:not-allowed;}
+  .btn-ghost{background:var(--surface-2); color:var(--ink);}
+  .btn-sm{padding:8px 12px; font-size:13px; border-radius:9px;}
+  .btn-danger{background:var(--bad-soft); color:var(--bad);}
+  .checkbox-row{display:flex; align-items:flex-start; gap:10px; font-size:13px; line-height:1.55; color:var(--ink);}
+  .checkbox-row input{margin-top:3px;}
+  .policy-box{max-height:220px; overflow-y:auto; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; font-size:12.5px; line-height:1.7; color:var(--ink-muted); white-space:pre-wrap;}
+  .big-btn{width:100%; padding:26px 18px; border-radius:20px; border:none; font-family:var(--font-head); font-weight:800; font-size:19px; display:flex; flex-direction:column; align-items:center; gap:6px;}
+  .big-btn .sub{font-family:var(--font-body); font-weight:500; font-size:12.5px; opacity:.85;}
+  .big-btn.go{background:var(--accent); color:var(--accent-ink);}
+  .big-btn.done{background:var(--surface-2); color:var(--ink-faint);}
+  table{width:100%; border-collapse:collapse; font-size:12.5px;}
+  th,td{padding:8px 7px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap;}
+  th{color:var(--ink-faint); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.04em;}
+  .tablewrap{overflow-x:auto; border:1px solid var(--border); border-radius:12px;}
+  .tablewrap table{min-width:720px;}
+  .toast{position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:11px 18px; border-radius:11px; font-size:13px; font-weight:600; box-shadow:var(--shadow); z-index:50; max-width:90vw; text-align:center;}
+  .link-btn{background:none;border:none;color:var(--ink-muted);font-size:12.5px;text-decoration:underline;padding:2px 0;}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .badge-site{font-size:11px; font-weight:700; color:var(--accent); background:var(--accent-soft); padding:2px 8px; border-radius:999px;}
+  ::selection{background:var(--accent-soft);}
+  input:focus-visible, select:focus-visible, button:focus-visible, textarea:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  @media (prefers-reduced-motion: reduce){*{transition:none !important; animation:none !important;}}
+</style>
+
+<div id="app"><div class="card" style="align-items:center;text-align:center;color:var(--ink-muted);">불러오는 중…</div></div>
+<div id="toast-root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* =========================================================
+     여기에 본인의 Firebase 프로젝트 설정값을 붙여넣으세요.
+     Firebase 콘솔 → 프로젝트 설정 → 일반 → "내 앱"(</> 아이콘) 에서
+     복사한 값 그대로 붙여넣으면 됩니다. (설정 가이드 문서 참고)
+  ========================================================= */
+  var firebaseConfig = {
+    apiKey: "AIzaSyCzPOxp_lu0YcRYqoSGSVUsDR385TgDqDk",
+    authDomain: "r-attendance-9b567.firebaseapp.com",
+    projectId: "r-attendance-9b567",
+    storageBucket: "r-attendance-9b567.firebasestorage.app",
+    messagingSenderId: "540264099389",
+    appId: "1:540264099389:web:29482879fc30a977b74454"
+  };
+  /* ========================================================= */
+
+  /* ---------- constants ---------- */
+  var TODAY_KEY = function(d){ d=d||new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+  var MONTH_KEY = function(d){ d=d||new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); };
+  var HHMM = function(d){ d=d||new Date(); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); };
+  var LS_ID = "3ri_att_my_emp_id";
+
+  var DEFAULT_CONFIG = {
+    sites: {
+      seoul:   { label:"서울 AI 허브", lat:37.465949,  lng:127.0359951 },
+      daejeon: { label:"대전 팁스타운", lat:36.3631304, lng:127.3469069 }
+    },
+    radiusM: 100,
+    workStart: "09:30",
+    workEnd: "18:30",
+    policyVersion: "2026-09-11",
+    policyText:
+"■ 위치기반 출퇴근관리 개인정보 수집·이용 동의서 (요약)\n\n" +
+"1. 수집 목적: 사업장 출퇴근 여부 확인 및 근태관리\n" +
+"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 기기의 GPS 위치정보(위도·경도), 사업장과의 거리\n" +
+"3. 보유·이용 기간: 재직 기간 중 활용하며, 퇴사일로부터 3년간 보관 후 파기합니다(근로기준법상 근로자 명부·임금대장 보존 의무 기준).\n" +
+"4. 위치정보의 처리: 수집된 위치정보는 출퇴근 인정 여부 판단 목적으로만 사용하며, 회사는 「위치정보의 보호 및 이용 등에 관한 법률」을 준수하여 이를 처리합니다. 실시간 위치 추적이나 근무시간 외 위치 수집은 하지 않습니다.\n" +
+"5. 제3자 제공: 법령에 근거가 없는 한 수집한 정보를 외부에 제공하지 않습니다.\n" +
+"6. 동의 거부 권리 및 불이익: 위 동의는 원활한 근태관리를 위해 필요하며, 동의하지 않을 경우 본 시스템을 통한 출퇴근 체크가 제한되고 기존 방식(수기/구두 보고 등)으로 근태를 확인합니다.\n\n" +
+"위 내용을 확인하였으며 이에 동의합니다."
+  };
+
+  var SEED_EMPLOYEES = [
+    {empId:"3R0001", name:"조광수", dept:"", site:"seoul"},
+    {empId:"3R0002", name:"박성현", dept:"닥터 사이먼팀 | PDSS", site:"daejeon"},
+    {empId:"3R0003", name:"오규찬", dept:"Focuspang 사업부", site:"seoul"},
+    {empId:"3R0004", name:"김미애", dept:"닥터 사이먼팀 | PDSS", site:"seoul"},
+    {empId:"3R0005", name:"임승우", dept:"Moment 사업부", site:"daejeon"},
+    {empId:"3R0006", name:"오지훈", dept:"Moment 사업부", site:"daejeon"},
+    {empId:"3R0007", name:"장지희", dept:"Moment 사업부", site:"daejeon"},
+    {empId:"3R0008", name:"정근영", dept:"Moment 사업부", site:"seoul"},
+    {empId:"3R0009", name:"Mahsa Aghazadeh", dept:"닥터 사이먼팀 | PDSS", site:"daejeon"},
+    {empId:"3R0010", name:"Mutalipov Firdavs", dept:"Focuspang 사업부", site:"seoul"},
+    {empId:"3R0011", name:"이효신", dept:"Platform Engineering팀", site:"seoul"},
+    {empId:"3R0012", name:"김예빈", dept:"콘텐츠 Marketing팀", site:"seoul"},
+    {empId:"3R0013", name:"Fathony Achmad", dept:"Platform Engineering팀", site:"seoul"},
+    {empId:"3R0014", name:"김민지", dept:"Focuspang 사업부", site:"seoul"},
+    {empId:"3R0015", name:"성지훈", dept:"Focuspang 사업부", site:"seoul"},
+    {empId:"3R0016", name:"이미숙", dept:"Moment 사업부", site:"seoul"},
+    {empId:"3R0017", name:"이수민", dept:"Focuspang 사업부", site:"seoul"},
+    {empId:"3R0018", name:"김세연", dept:"Moment 사업부", site:"seoul"},
+    {empId:"3R0019", name:"박지수", dept:"콘텐츠 Marketing팀", site:"seoul"},
+    {empId:"3R0020", name:"이대호", dept:"경영지원팀", site:"daejeon"},
+    {empId:"3R0021", name:"백장미", dept:"Focuspang 사업부", site:"seoul"},
+    {empId:"3R0022", name:"이경주", dept:"Focuspang 사업부", site:"seoul"},
+    {empId:"3R0023", name:"김민아", dept:"사업개발&Sales팀", site:"seoul"}
+  ];
+
+  /* ---------- state ---------- */
+  var db = null, auth = null, capsReady = false, configMissing = false;
+  var state = {
+    tab: "me",                 // "me" | "admin"
+    employees: [],             // [{empId,name,dept,site}]
+    config: DEFAULT_CONFIG,
+    myId: localStorage.getItem(LS_ID) || "",
+    consent: undefined,        // undefined = unknown, null = none, obj = exists
+    myMonthDoc: null,          // this month's record doc for me
+    busy: false,
+    authUser: null,
+    isAdmin: false,
+    adminMonth: MONTH_KEY(),
+    adminSiteFilter: "all",
+    adminRows: [],             // flattened rows for current admin month
+    adminLoading: false,
+    empDraftId: null
+  };
+
+  function haversine(lat1,lng1,lat2,lng2){
+    var R=6371000, toRad=function(v){return v*Math.PI/180;};
+    var dLat=toRad(lat2-lat1), dLng=toRad(lng2-lng1);
+    var a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+    return Math.round(R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)));
+  }
+
+  function toast(msg, ms){
+    var root = document.getElementById("toast-root");
+    var el = document.createElement("div");
+    el.className = "toast"; el.textContent = msg;
+    root.appendChild(el);
+    setTimeout(function(){ el.remove(); }, ms||2600);
+  }
+
+  function el(tag, attrs, children){
+    var n = document.createElement(tag);
+    attrs = attrs || {};
+    Object.keys(attrs).forEach(function(k){
+      if(k==="class") n.className = attrs[k];
+      else if(k==="html") n.innerHTML = attrs[k];
+      else if(k.indexOf("on")===0 && typeof attrs[k]==="function") n.addEventListener(k.slice(2), attrs[k]);
+      else if(attrs[k] !== undefined && attrs[k] !== null && attrs[k] !== false) n.setAttribute(k, attrs[k]===true ? "" : attrs[k]);
+    });
+    (children||[]).forEach(function(c){
+      if(c===null||c===undefined||c===false) return;
+      n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    });
+    return n;
+  }
+
+  /* ---------- firebase init ---------- */
+  async function initFirebase(){
+    if(String(firebaseConfig.apiKey||"").indexOf("PASTE_")===0){
+      configMissing = true; capsReady = true; render(); return;
+    }
+    try{
+      firebase.initializeApp(firebaseConfig);
+      auth = firebase.auth();
+      db = firebase.firestore();
+    }catch(e){
+      configMissing = true; capsReady = true; render(); return;
+    }
+
+    auth.onAuthStateChanged(function(user){
+      state.authUser = user;
+      state.isAdmin = !!(user && !user.isAnonymous);
+      render();
+    });
+    try{ await auth.signInAnonymously(); }catch(e){ /* onAuthStateChanged handles rendering */ }
+
+    capsReady = true;
+    await loadConfigAndEmployees();
+    watchMyConsent();
+    watchMyMonth();
+    render();
+  }
+
+  async function loadConfigAndEmployees(){
+    try{
+      var cfgSnap = await db.doc("config/settings").get();
+      if(cfgSnap.exists){
+        var d = cfgSnap.data();
+        state.config = Object.assign({}, DEFAULT_CONFIG, d, {
+          sites: Object.assign({}, DEFAULT_CONFIG.sites, d.sites || {})
+        });
+      }
+    }catch(e){}
+    db.collection("employees").onSnapshot(function(snap){
+      state.employees = snap.docs.map(function(d){ return d.data(); }).sort(function(a,b){ return (a.empId||"").localeCompare(b.empId||""); });
+      render();
+    }, function(){});
+  }
+
+  function watchMyConsent(){
+    if(!state.myId) { state.consent = null; return; }
+    db.doc("consents/"+state.myId).onSnapshot(function(snap){
+      state.consent = snap.exists ? snap.data() : null;
+      render();
+    }, function(){ state.consent = null; render(); });
+  }
+
+  function watchMyMonth(){
+    if(!state.myId) return;
+    var id = state.myId + "_" + MONTH_KEY();
+    db.doc("checkins/"+id).onSnapshot(function(snap){
+      state.myMonthDoc = snap.exists ? snap.data() : null;
+      render();
+    }, function(){});
+  }
+
+  function myEmployee(){
+    return state.employees.find(function(e){ return e.empId === state.myId; }) || null;
+  }
+  function todaysRecords(monthDoc){
+    if(!monthDoc || !monthDoc.records) return [];
+    var tk = TODAY_KEY();
+    return monthDoc.records.filter(function(r){ return r.date === tk; });
+  }
+
+  /* ---------- actions ---------- */
+  function chooseIdentity(empId){
+    state.myId = empId;
+    localStorage.setItem(LS_ID, empId);
+    state.consent = undefined; state.myMonthDoc = null;
+    watchMyConsent(); watchMyMonth();
+    render();
+  }
+  function switchIdentity(){
+    state.myId = ""; localStorage.removeItem(LS_ID);
+    state.consent = undefined; state.myMonthDoc = null;
+    render();
+  }
+
+  async function giveConsent(){
+    if(!db) return;
+    var emp = myEmployee(); if(!emp) return;
+    state.busy = true; render();
+    try{
+      await db.doc("consents/"+state.myId).set({
+        empId: state.myId, name: emp.name, agreedAt: new Date().toISOString(), policyVersion: state.config.policyVersion
+      });
+    }catch(e){ toast("동의 저장에 실패했어요. 다시 시도해주세요."); }
+    state.busy = false; render();
+  }
+
+  function getPosition(){
+    return new Promise(function(resolve, reject){
+      if(!navigator.geolocation){ reject({code:"unsupported"}); return; }
+      navigator.geolocation.getCurrentPosition(
+        function(pos){ resolve(pos); },
+        function(err){ reject(err); },
+        { enableHighAccuracy:true, timeout:12000, maximumAge:0 }
+      );
+    });
+  }
+
+  async function doCheck(type){
+    var emp = myEmployee(); if(!emp || state.busy) return;
+    state.busy = true; render();
+    try{
+      var pos = await getPosition();
+      var site = state.config.sites[emp.site];
+      var dist = haversine(pos.coords.latitude, pos.coords.longitude, site.lat, site.lng);
+      var radius = state.config.radiusM;
+      if(dist > radius){
+        toast("사업장(" + site.label + ")에서 약 " + dist + "m 떨어져 있어요. 반경 " + radius + "m 이내에서 다시 시도해주세요.", 4200);
+        state.busy = false; render(); return;
+      }
+      var now = new Date();
+      var timeStr = HHMM(now);
+      var status = type === "in"
+        ? (timeStr > state.config.workStart ? "지각" : "정상")
+        : (timeStr < state.config.workEnd ? "조퇴" : "정상");
+      var rec = {
+        date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
+        lat: pos.coords.latitude, lng: pos.coords.longitude,
+        accuracy: Math.round(pos.coords.accuracy || 0), distanceM: dist, status: status
+      };
+      var docId = state.myId + "_" + MONTH_KEY(now);
+      var ref = db.doc("checkins/"+docId);
+      var snap = await ref.get();
+      var records = (snap.exists && snap.data().records) ? snap.data().records.slice() : [];
+      records.push(rec);
+      var body = { empId: state.myId, name: emp.name, dept: emp.dept||"", site: emp.site, month: MONTH_KEY(now), records: records };
+      if(snap.exists) await ref.update(body); else await ref.set(body);
+      toast((type==="in" ? "출근" : "퇴근") + " 체크 완료 · " + timeStr + " · " + status);
+    }catch(err){
+      if(err && (err.code===1 || err.code==="PERMISSION_DENIED")) toast("위치 접근 권한이 필요해요. 브라우저 설정에서 위치 권한을 허용해주세요.", 4000);
+      else if(err && err.code==="unsupported") toast("이 브라우저에서는 위치 확인을 지원하지 않아요.");
+      else toast("위치를 확인하지 못했어요. GPS가 켜져 있는지 확인하고 다시 시도해주세요.", 3600);
+    }
+    state.busy = false; render();
+  }
+
+  async function adminLogin(email, pw){
+    if(!email || !pw){ toast("이메일과 비밀번호를 입력해주세요."); return; }
+    try{
+      await auth.signInWithEmailAndPassword(email, pw);
+      toast("로그인되었어요.");
+      loadAdminMonth();
+    }catch(e){ toast("로그인에 실패했어요. 이메일/비밀번호를 확인해주세요."); }
+  }
+  async function adminLogout(){
+    try{ await auth.signOut(); await auth.signInAnonymously(); }catch(e){}
+    state.adminRows = []; render();
+  }
+
+  async function loadAdminMonth(){
+    if(!db || state.employees.length===0){ state.adminRows=[]; return; }
+    state.adminLoading = true; render();
+    var month = state.adminMonth;
+    try{
+      var snaps = await Promise.all(state.employees.map(function(e){
+        return db.doc("checkins/"+e.empId+"_"+month).get();
+      }));
+      var rows = [];
+      snaps.forEach(function(s){
+        if(!s.exists) return;
+        var d = s.data();
+        (d.records||[]).forEach(function(r, idx){
+          rows.push(Object.assign({}, r, { empId:d.empId, name:d.name, dept:d.dept, site:d.site, _docId:s.id, _idx:idx }));
+        });
+      });
+      rows.sort(function(a,b){ return (b.ts||"").localeCompare(a.ts||""); });
+      state.adminRows = rows;
+    }catch(e){ toast("기록을 불러오지 못했어요. 관리자 권한을 확인해주세요."); }
+    state.adminLoading = false; render();
+  }
+
+  async function adminUpdateRecord(row, patch){
+    try{
+      var ref = db.doc("checkins/"+row._docId);
+      var snap = await ref.get();
+      if(!snap.exists) return;
+      var records = snap.data().records.slice();
+      records[row._idx] = Object.assign({}, records[row._idx], patch, { editedBy: (state.authUser&&state.authUser.email)||"admin", editedAt: new Date().toISOString() });
+      await ref.update({ records: records });
+      toast("수정되었어요.");
+      loadAdminMonth();
+    }catch(e){ toast("수정에 실패했어요. 관리자 권한이 있는 계정인지 확인해주세요."); }
+  }
+
+  async function adminDeleteRecord(row){
+    try{
+      var ref = db.doc("checkins/"+row._docId);
+      var snap = await ref.get();
+      if(!snap.exists) return;
+      var records = snap.data().records.slice();
+      records.splice(row._idx, 1);
+      await ref.update({ records: records });
+      toast("삭제되었어요.");
+      loadAdminMonth();
+    }catch(e){ toast("삭제에 실패했어요. 관리자 권한이 있는 계정인지 확인해주세요."); }
+  }
+
+  async function adminSaveSettings(draft){
+    try{
+      await db.doc("config/settings").set(draft);
+      state.config = Object.assign({}, DEFAULT_CONFIG, draft, { sites: Object.assign({}, DEFAULT_CONFIG.sites, draft.sites||{}) });
+      toast("설정이 저장되었어요.");
+      render();
+    }catch(e){ toast("저장에 실패했어요. 관리자 계정으로 로그인했는지 확인해주세요."); }
+  }
+
+  async function adminSaveEmployee(emp){
+    try{
+      await db.doc("employees/"+emp.empId).set(emp);
+      toast("직원 정보가 저장되었어요.");
+      state.empDraftId = null;
+    }catch(e){ toast("저장에 실패했어요. 관리자 계정으로 로그인했는지 확인해주세요."); }
+    render();
+  }
+  async function adminDeleteEmployee(empId){
+    try{
+      await db.doc("employees/"+empId).delete();
+      toast("직원이 삭제되었어요.");
+    }catch(e){ toast("삭제에 실패했어요. 관리자 계정으로 로그인했는지 확인해주세요."); }
+  }
+
+  async function seedInitialData(){
+    try{
+      var existing = await db.collection("employees").limit(1).get();
+      if(!existing.empty){ toast("이미 직원 데이터가 있어서 건너뛰었어요."); return; }
+      var batch = db.batch();
+      SEED_EMPLOYEES.forEach(function(e){ batch.set(db.doc("employees/"+e.empId), e); });
+      batch.set(db.doc("config/settings"), DEFAULT_CONFIG);
+      await batch.commit();
+      toast("초기 직원·설정 데이터를 저장했어요.");
+    }catch(e){ toast("초기화에 실패했어요: " + ((e && e.message) || "관리자 계정으로 로그인했는지 확인해주세요.")); }
+  }
+
+  function exportExcel(){
+    if(typeof XLSX === "undefined"){ toast("표 생성 라이브러리를 불러오는 중이에요. 잠시 후 다시 시도해주세요."); return; }
+    var rows = state.adminRows.filter(function(r){ return state.adminSiteFilter==="all" || r.site===state.adminSiteFilter; });
+    var data = rows.map(function(r){
+      return {
+        "날짜": r.date, "사번": r.empId, "이름": r.name, "부서": r.dept||"",
+        "지점": state.config.sites[r.site] ? state.config.sites[r.site].label : r.site,
+        "구분": r.type==="in" ? "출근" : "퇴근", "시각": r.time, "상태": r.status,
+        "거리(m)": r.distanceM, "위도": r.lat, "경도": r.lng,
+        "수정자": r.editedBy||"", "수정시각": r.editedAt||""
+      };
+    });
+    if(data.length===0){ toast("내보낼 기록이 없어요."); return; }
+    try{
+      var ws = XLSX.utils.json_to_sheet(data);
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, state.adminMonth);
+      XLSX.writeFile(wb, "출퇴근기록_"+state.adminMonth+".xlsx");
+      toast("엑셀 파일을 다운로드했어요.");
+    }catch(e){ toast("내보내기에 실패했어요."); }
+  }
+
+  /* ---------- render: screens ---------- */
+  function render(){
+    var root = document.getElementById("app");
+    root.innerHTML = "";
+    root.className = state.tab==="admin" ? "wide" : "";
+    root.appendChild(Topbar());
+
+    if(configMissing){
+      root.appendChild(el("div",{class:"card"},[
+        el("h3",{},["Firebase 설정이 필요해요"]),
+        el("div",{class:"muted"},["이 파일 상단의 firebaseConfig 값을 본인의 Firebase 프로젝트 값으로 바꿔주세요. 함께 받은 설정 가이드 문서를 참고하시면 됩니다."])
+      ]));
+      return;
+    }
+    if(!capsReady){
+      root.appendChild(el("div",{class:"card"},[el("div",{class:"muted"},["불러오는 중…"])]));
+      return;
+    }
+    if(!state.myId){ root.appendChild(IdentityScreen()); return; }
+    var emp = myEmployee();
+    if(!emp){
+      root.appendChild(el("div",{class:"card"},[
+        el("div",{class:"muted"},["등록된 직원 정보를 찾을 수 없어요. 관리자에게 문의해주세요."]),
+        el("button",{class:"btn btn-ghost", onclick:switchIdentity},["다시 선택하기"])
+      ]));
+      return;
+    }
+    if(state.consent === undefined){ root.appendChild(el("div",{class:"card"},[el("div",{class:"muted"},["확인 중…"])])); return; }
+    if(!state.consent){ root.appendChild(ConsentScreen(emp)); return; }
+
+    root.appendChild(Tabbar());
+    if(state.tab === "me") root.appendChild(MeScreen(emp));
+    else root.appendChild(AdminScreen());
+  }
+
+  function Topbar(){
+    var clockEl = el("span",{class:"clock num"},[HHMM()+":"+String(new Date().getSeconds()).padStart(2,"0")]);
+    return el("div",{class:"topbar"},[
+      el("div",{class:"brand"},[el("span",{class:"dot"}), el("span",{class:"brand-name"},["3RI 출퇴근"])]),
+      clockEl
+    ]);
+  }
+
+  function Tabbar(){
+    return el("div",{class:"tabbar"},[
+      el("button",{class:"tab-me"+(state.tab==="me"?" active":""), onclick:function(){ state.tab="me"; render(); }},["내 출퇴근"]),
+      el("button",{class:"tab-admin"+(state.tab==="admin"?" active":""), onclick:function(){ state.tab="admin"; if(state.isAdmin && state.adminRows.length===0) loadAdminMonth(); render(); }},["관리자"])
+    ]);
+  }
+
+  function IdentityScreen(){
+    var options = [el("option",{value:""},["직원을 선택하세요"])].concat(
+      state.employees.map(function(e){ return el("option",{value:e.empId},[e.name + " · " + (e.dept||"미지정") + " · " + e.empId]); })
+    );
+    var sel = el("select",{onchange:function(ev){ if(ev.target.value) chooseIdentity(ev.target.value); }}, options);
+    return el("div",{class:"card"},[
+      el("h2",{},["누구신가요?"]),
+      el("div",{class:"muted"},["처음 사용하신다면 본인의 사번을 선택해주세요. 이 기기에서는 다음부터 자동으로 기억돼요."]),
+      state.employees.length ? sel : el("div",{class:"muted"},["직원 목록을 불러오는 중이에요… (관리자가 초기 데이터를 아직 심지 않았다면 관리자 탭에서 심어주세요)"])
+    ]);
+  }
+
+  function ConsentScreen(emp){
+    var checkboxId = "agree-check";
+    var checked = false;
+    var checkbox = el("input",{type:"checkbox", id:checkboxId, onchange:function(ev){ checked=ev.target.checked; btn.disabled=!checked; }});
+    var btn = el("button",{class:"btn btn-primary", disabled:true, onclick:giveConsent},[state.busy?"저장 중…":"동의하고 시작하기"]);
+    return el("div",{class:"card"},[
+      el("h2",{},["개인정보 수집·이용 동의"]),
+      el("div",{class:"muted"},[emp.name+"("+emp.empId+")님, 출퇴근 체크를 시작하기 전에 아래 내용에 동의해주세요."]),
+      el("div",{class:"policy-box"},[state.config.policyText]),
+      el("label",{class:"checkbox-row", for:checkboxId},[checkbox, el("span",{},["위 개인정보 수집·이용에 동의합니다."])]),
+      btn,
+      el("button",{class:"link-btn", onclick:switchIdentity},["다른 직원으로 전환"])
+    ]);
+  }
+
+  function StatusPill(status){
+    var cls = status==="정상" ? "pill-ok" : status==="지각" ? "pill-warn" : status==="조퇴" ? "pill-warn" : "pill-neutral";
+    return el("span",{class:"pill "+cls},[status]);
+  }
+
+  function MeScreen(emp){
+    var site = state.config.sites[emp.site] || {label: emp.site};
+    var todays = todaysRecords(state.myMonthDoc);
+    var hasIn = todays.some(function(r){ return r.type==="in"; });
+    var hasOut = todays.some(function(r){ return r.type==="out"; });
+
+    var nextBtn;
+    if(!hasIn){
+      nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("in"); }},[
+        el("span",{},[state.busy?"위치 확인 중…":"출근하기"]),
+        el("span",{class:"sub"},[site.label+" 반경 "+state.config.radiusM+"m 이내에서 가능"])
+      ]);
+    } else if(!hasOut){
+      nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("out"); }},[
+        el("span",{},[state.busy?"위치 확인 중…":"퇴근하기"]),
+        el("span",{class:"sub"},[site.label+" 반경 "+state.config.radiusM+"m 이내에서 가능"])
+      ]);
+    } else {
+      nextBtn = el("button",{class:"big-btn done", disabled:true},[
+        el("span",{},["오늘 출퇴근 완료"]), el("span",{class:"sub"},["수고하셨어요"])
+      ]);
+    }
+
+    var timeline = todays.length ? el("div",{class:"col"}, todays.map(function(r){
+      return el("div",{class:"row card-tight", style:"border:1px solid var(--border);border-radius:10px;"},[
+        el("div",{class:"col", style:"gap:2px;"},[
+          el("span",{style:"font-weight:700;font-size:13px;"},[r.type==="in"?"출근":"퇴근"]),
+          el("span",{class:"faint num"},[r.time+" · "+r.distanceM+"m"])
+        ]),
+        StatusPill(r.status)
+      ]);
+    })) : el("div",{class:"muted"},["오늘 기록이 아직 없어요."]);
+
+    return el("div",{class:"col", style:"gap:14px;"},[
+      el("div",{class:"card"},[
+        el("div",{class:"row"},[
+          el("div",{class:"col",style:"gap:2px;"},[
+            el("span",{style:"font-weight:800;font-size:17px;font-family:var(--font-head);"},[emp.name]),
+            el("span",{class:"faint"},[emp.empId+" · "+(emp.dept||"미지정")])
+          ]),
+          el("span",{class:"badge-site"},[site.label])
+        ]),
+        nextBtn
+      ]),
+      el("div",{class:"card"},[el("h3",{style:"font-size:14px;"},["오늘 기록"]), timeline]),
+      el("button",{class:"link-btn", onclick:switchIdentity},["다른 직원으로 전환"])
+    ]);
+  }
+
+  function AdminScreen(){
+    if(!state.isAdmin){
+      var emailIn = el("input",{type:"email", placeholder:"관리자 이메일"});
+      var pwIn = el("input",{type:"password", placeholder:"비밀번호"});
+      return el("div",{class:"card", style:"max-width:360px;"},[
+        el("h3",{},["관리자 로그인"]),
+        el("div",{class:"muted"},["Firebase Authentication에 등록해 둔 관리자 계정으로 로그인하세요."]),
+        emailIn, pwIn,
+        el("button",{class:"btn btn-primary", onclick:function(){ adminLogin(emailIn.value.trim(), pwIn.value); }},["로그인"])
+      ]);
+    }
+    return el("div",{class:"col", style:"gap:14px;"},[
+      el("div",{class:"row"},[
+        el("span",{class:"faint"},["관리자: "+((state.authUser&&state.authUser.email)||"")]),
+        el("button",{class:"link-btn", onclick:adminLogout},["로그아웃"])
+      ]),
+      AdminRecordsCard(),
+      AdminEmployeesCard(),
+      AdminSettingsCard(),
+      AdminSeedCard()
+    ]);
+  }
+
+  function AdminRecordsCard(){
+    var monthInput = el("input",{type:"text", value:state.adminMonth, style:"max-width:120px;", placeholder:"YYYY-MM",
+      onchange:function(ev){ state.adminMonth = ev.target.value.trim() || MONTH_KEY(); loadAdminMonth(); }});
+    var siteSel = el("select",{style:"max-width:160px;", onchange:function(ev){ state.adminSiteFilter=ev.target.value; render(); }},[
+      el("option",{value:"all", selected:state.adminSiteFilter==="all"},["전체 지점"]),
+      el("option",{value:"seoul", selected:state.adminSiteFilter==="seoul"},["서울"]),
+      el("option",{value:"daejeon", selected:state.adminSiteFilter==="daejeon"},["대전"])
+    ]);
+    var rows = state.adminRows.filter(function(r){ return state.adminSiteFilter==="all" || r.site===state.adminSiteFilter; });
+
+    var tbody = rows.map(function(r){
+      var timeInput = el("input",{type:"time", value:r.time, style:"width:96px;padding:5px 6px;font-size:12px;",
+        onchange:function(ev){ adminUpdateRecord(r, { time: ev.target.value }); }});
+      var statusSel = el("select",{style:"width:78px;padding:5px 6px;font-size:12px;",
+        onchange:function(ev){ adminUpdateRecord(r, { status: ev.target.value }); }},
+        ["정상","지각","조퇴"].map(function(s){ return el("option",{value:s, selected:r.status===s},[s]); }));
+      return el("tr",{},[
+        el("td",{},[r.date]),
+        el("td",{},[r.name]),
+        el("td",{},[el("span",{class:"badge-site"},[state.config.sites[r.site]?state.config.sites[r.site].label:r.site])]),
+        el("td",{},[r.type==="in"?"출근":"퇴근"]),
+        el("td",{},[timeInput]),
+        el("td",{},[statusSel]),
+        el("td",{class:"num"},[String(r.distanceM)+"m"]),
+        el("td",{},[el("button",{class:"btn btn-sm btn-danger", onclick:function(){ adminDeleteRecord(r); }},["삭제"])])
+      ]);
+    });
+
+    return el("div",{class:"card"},[
+      el("div",{class:"row", style:"flex-wrap:wrap;"},[
+        el("h3",{style:"font-size:15px;"},["출퇴근 기록"]),
+        el("div",{class:"row", style:"gap:8px;flex:none;"},[monthInput, siteSel])
+      ]),
+      state.adminLoading ? el("div",{class:"muted"},["불러오는 중…"]) :
+        rows.length===0 ? el("div",{class:"muted"},["이 달 기록이 없어요."]) :
+        el("div",{class:"tablewrap"},[el("table",{},[
+          el("thead",{},[el("tr",{},["날짜","이름","지점","구분","시각","상태","거리",""].map(function(h){ return el("th",{},[h]); }))]),
+          el("tbody",{}, tbody)
+        ])]),
+      el("div",{class:"row"},[
+        el("span",{class:"faint"},[rows.length+"건"]),
+        el("button",{class:"btn btn-ghost btn-sm", onclick:exportExcel},["엑셀로 내보내기"])
+      ])
+    ]);
+  }
+
+  function AdminEmployeesCard(){
+    var draft = state.empDraftId==="__new__" ? {empId:"",name:"",dept:"",site:"seoul"} :
+      (state.empDraftId ? state.employees.find(function(e){return e.empId===state.empDraftId;}) : null);
+
+    var list = state.employees.map(function(e){
+      return el("div",{class:"row card-tight", style:"border:1px solid var(--border);border-radius:10px;"},[
+        el("div",{class:"col",style:"gap:1px;"},[
+          el("span",{style:"font-weight:700;font-size:13px;"},[e.name+" · "+e.empId]),
+          el("span",{class:"faint"},[e.dept||"미지정"])
+        ]),
+        el("div",{class:"row",style:"gap:6px;flex:none;"},[
+          el("span",{class:"badge-site"},[state.config.sites[e.site]?state.config.sites[e.site].label:e.site]),
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId=e.empId; render(); }},["수정"])
+        ])
+      ]);
+    });
+
+    var formCard = null;
+    if(draft){
+      var idIn = el("input",{type:"text", value:draft.empId, placeholder:"사번 (예: 3R0024)", disabled: !!state.employees.find(function(e){return e.empId===draft.empId;})});
+      var nameIn = el("input",{type:"text", value:draft.name, placeholder:"이름"});
+      var deptIn = el("input",{type:"text", value:draft.dept, placeholder:"부서"});
+      var siteSel2 = el("select",{},[
+        el("option",{value:"seoul", selected:draft.site==="seoul"},["서울"]),
+        el("option",{value:"daejeon", selected:draft.site==="daejeon"},["대전"])
+      ]);
+      formCard = el("div",{class:"card card-tight", style:"border:1px dashed var(--border);"},[
+        el("div",{class:"grid2"},[idIn, nameIn]),
+        el("div",{class:"grid2"},[deptIn, siteSel2]),
+        el("div",{class:"row"},[
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId=null; render(); }},["취소"]),
+          el("div",{class:"row",style:"gap:6px;"},[
+            draft.empId && state.employees.find(function(e){return e.empId===draft.empId;}) ?
+              el("button",{class:"btn btn-danger btn-sm", onclick:function(){ adminDeleteEmployee(draft.empId); }},["삭제"]) : null,
+            el("button",{class:"btn btn-primary btn-sm", onclick:function(){
+              var empId = idIn.value.trim();
+              if(!empId || !nameIn.value.trim()){ toast("사번과 이름을 입력해주세요."); return; }
+              adminSaveEmployee({ empId:empId, name:nameIn.value.trim(), dept:deptIn.value.trim(), site:siteSel2.value });
+            }},["저장"])
+          ])
+        ])
+      ]);
+    }
+
+    return el("div",{class:"card"},[
+      el("div",{class:"row"},[
+        el("h3",{style:"font-size:15px;"},["직원 관리"]),
+        el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId="__new__"; render(); }},["+ 직원 추가"])
+      ]),
+      formCard,
+      el("div",{class:"col"}, list)
+    ]);
+  }
+
+  function AdminSettingsCard(){
+    var c = state.config;
+    var mk = function(label, input){ return el("label",{class:"field"},[label, input]); };
+    var seoulLat = el("input",{type:"text", value:c.sites.seoul.lat});
+    var seoulLng = el("input",{type:"text", value:c.sites.seoul.lng});
+    var seoulLabel = el("input",{type:"text", value:c.sites.seoul.label});
+    var daejeonLat = el("input",{type:"text", value:c.sites.daejeon.lat});
+    var daejeonLng = el("input",{type:"text", value:c.sites.daejeon.lng});
+    var daejeonLabel = el("input",{type:"text", value:c.sites.daejeon.label});
+    var radiusIn = el("input",{type:"number", value:c.radiusM});
+    var startIn = el("input",{type:"time", value:c.workStart});
+    var endIn = el("input",{type:"time", value:c.workEnd});
+    var policyIn = el("textarea",{}, [c.policyText]);
+
+    return el("div",{class:"card"},[
+      el("h3",{style:"font-size:15px;"},["설정"]),
+      el("div",{class:"muted"},["서울 사업장"]),
+      el("div",{class:"grid2"},[mk("명칭", seoulLabel), mk("반경(m)", radiusIn)]),
+      el("div",{class:"grid2"},[mk("위도", seoulLat), mk("경도", seoulLng)]),
+      el("div",{class:"muted"},["대전 사업장"]),
+      el("div",{class:"grid2"},[mk("명칭", daejeonLabel), mk("근무 시작", startIn)]),
+      el("div",{class:"grid2"},[mk("위도", daejeonLat), mk("경도", daejeonLng)]),
+      el("div",{class:"grid2"},[mk("근무 종료", endIn)]),
+      mk("개인정보 동의 안내문", policyIn),
+      el("button",{class:"btn btn-primary", onclick:function(){
+        adminSaveSettings({
+          sites: {
+            seoul:{ label:seoulLabel.value, lat:parseFloat(seoulLat.value), lng:parseFloat(seoulLng.value) },
+            daejeon:{ label:daejeonLabel.value, lat:parseFloat(daejeonLat.value), lng:parseFloat(daejeonLng.value) }
+          },
+          radiusM: parseInt(radiusIn.value,10) || 100,
+          workStart: startIn.value, workEnd: endIn.value,
+          policyText: policyIn.value,
+          policyVersion: c.policyVersion
+        });
+      }},["설정 저장"])
+    ]);
+  }
+
+  function AdminSeedCard(){
+    return el("div",{class:"card"},[
+      el("h3",{style:"font-size:15px;"},["초기 데이터 세팅"]),
+      el("div",{class:"muted"},["최초 1회만 눌러주세요. 이미 직원 데이터가 있으면 아무 것도 바뀌지 않아요."]),
+      el("button",{class:"btn btn-ghost", onclick:seedInitialData},["기본 직원·설정 데이터 심기"])
+    ]);
+  }
+
+  /* ---------- clock tick ---------- */
+  setInterval(function(){
+    if(document.hidden) return;
+    var clockEl = document.querySelector(".clock");
+    if(clockEl) clockEl.textContent = HHMM()+":"+String(new Date().getSeconds()).padStart(2,"0");
+  }, 1000);
+
+  render();
+  initFirebase();
+})();
+</script>
