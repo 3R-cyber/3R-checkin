@@ -199,7 +199,8 @@
     adminLoading: false,
     empDraftId: null,
     bulkAddOpen: false,
-    adminSelected: {}
+    adminSelected: {},
+    tripMode: false
   };
 
   function haversine(lat1,lng1,lat2,lng2){
@@ -271,7 +272,7 @@
       }
     }catch(e){}
     db.collection("employees").onSnapshot(function(snap){
-      state.employees = snap.docs.map(function(d){ return d.data(); }).sort(function(a,b){ return (a.empId||"").localeCompare(b.empId||""); });
+      state.employees = snap.docs.map(function(d){ return d.data(); }).sort(function(a,b){ return (a.name||"").localeCompare(b.name||"", "ko"); });
       render();
     }, function(){});
   }
@@ -339,28 +340,37 @@
     });
   }
 
-  async function doCheck(type){
+  async function doCheck(type, opts){
     var emp = myEmployee(); if(!emp || state.busy) return;
+    var isTrip = !!(opts && opts.isTrip);
     state.busy = true; render();
     try{
-      var pos = await getPosition();
-      var site = state.config.sites[emp.site];
-      var dist = haversine(pos.coords.latitude, pos.coords.longitude, site.lat, site.lng);
-      var radius = state.config.radiusM;
-      if(dist > radius){
-        toast("사업장(" + site.label + ")에서 약 " + dist + "m 떨어져 있어요. 반경 " + radius + "m 이내에서 다시 시도해주세요.", 4200);
-        state.busy = false; render(); return;
-      }
       var now = new Date();
       var timeStr = HHMM(now);
-      var status = type === "in"
-        ? (timeStr > state.config.workStart ? "지각" : "정상")
-        : (timeStr < state.config.workEnd ? "조퇴" : "정상");
-      var rec = {
-        date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
-        lat: pos.coords.latitude, lng: pos.coords.longitude,
-        accuracy: Math.round(pos.coords.accuracy || 0), distanceM: dist, status: status
-      };
+      var rec;
+      if(isTrip){
+        rec = {
+          date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
+          lat: null, lng: null, accuracy: null, distanceM: null, status: "출장"
+        };
+      } else {
+        var pos = await getPosition();
+        var site = state.config.sites[emp.site];
+        var dist = haversine(pos.coords.latitude, pos.coords.longitude, site.lat, site.lng);
+        var radius = state.config.radiusM;
+        if(dist > radius){
+          toast("사업장(" + site.label + ")에서 약 " + dist + "m 떨어져 있어요. 반경 " + radius + "m 이내에서 다시 시도해주세요. 위치 확인이 어려우면 '출장' 체크를 이용해주세요.", 4600);
+          state.busy = false; render(); return;
+        }
+        var status = type === "in"
+          ? (timeStr > state.config.workStart ? "지각" : "정상")
+          : (timeStr < state.config.workEnd ? "조퇴" : "정상");
+        rec = {
+          date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
+          lat: pos.coords.latitude, lng: pos.coords.longitude,
+          accuracy: Math.round(pos.coords.accuracy || 0), distanceM: dist, status: status
+        };
+      }
       var docId = state.myId + "_" + MONTH_KEY(now);
       var ref = db.doc("checkins/"+docId);
       var snap = await ref.get();
@@ -368,7 +378,7 @@
       records.push(rec);
       var body = { empId: state.myId, name: emp.name, dept: emp.dept||"", site: emp.site, month: MONTH_KEY(now), records: records };
       if(snap.exists) await ref.update(body); else await ref.set(body);
-      toast((type==="in" ? "출근" : "퇴근") + " 체크 완료 · " + timeStr + " · " + status);
+      toast((type==="in" ? "출근" : "퇴근") + " 체크 완료 · " + timeStr + " · " + rec.status);
     }catch(err){
       if(err && (err.code===1 || err.code==="PERMISSION_DENIED")) toast("위치 접근 권한이 필요해요. 브라우저 설정에서 위치 권한을 허용해주세요.", 4000);
       else if(err && err.code==="unsupported") toast("이 브라우저에서는 위치 확인을 지원하지 않아요.");
@@ -538,7 +548,7 @@
         "날짜": r.date, "사번": r.empId, "이름": r.name, "부서": r.dept||"",
         "지점": state.config.sites[r.site] ? state.config.sites[r.site].label : r.site,
         "구분": r.type==="in" ? "출근" : "퇴근", "시각": r.time, "상태": r.status,
-        "거리(m)": r.distanceM, "위도": r.lat, "경도": r.lng,
+        "거리(m)": r.distanceM==null ? "-" : r.distanceM, "위도": r.lat==null ? "" : r.lat, "경도": r.lng==null ? "" : r.lng,
         "수정자": r.editedBy||"", "수정시각": r.editedAt||""
       };
     });
@@ -610,7 +620,7 @@
 
   function IdentityScreen(){
     var options = [el("option",{value:""},["직원을 선택하세요"])].concat(
-      state.employees.map(function(e){ return el("option",{value:e.empId},[e.name + " · " + (e.dept||"미지정") + " · " + e.empId]); })
+      state.employees.map(function(e){ return el("option",{value:e.empId},[e.name + " · " + (e.dept||"미지정")]); })
     );
     var sel = el("select",{onchange:function(ev){ if(ev.target.value) chooseIdentity(ev.target.value); }}, options);
     return el("div",{class:"card"},[
@@ -646,16 +656,21 @@
     var hasIn = todays.some(function(r){ return r.type==="in"; });
     var hasOut = todays.some(function(r){ return r.type==="out"; });
 
+    var tripToggle = el("label",{class:"row", style:"gap:8px;align-items:center;cursor:pointer;"},[
+      el("input",{type:"checkbox", checked:state.tripMode, onchange:function(ev){ state.tripMode = ev.target.checked; render(); }}),
+      el("span",{class:"muted", style:"font-size:13px;"},["출장 중이에요 (위치 확인 없이 체크)"])
+    ]);
+
     var nextBtn;
     if(!hasIn){
-      nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("in"); }},[
-        el("span",{},[state.busy?"위치 확인 중…":"출근하기"]),
-        el("span",{class:"sub"},[site.label+" 반경 "+state.config.radiusM+"m 이내에서 가능"])
+      nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("in", {isTrip:state.tripMode}); }},[
+        el("span",{},[state.busy?"확인 중…":"출근하기"]),
+        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : site.label+" 반경 "+state.config.radiusM+"m 이내에서 가능"])
       ]);
     } else if(!hasOut){
-      nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("out"); }},[
-        el("span",{},[state.busy?"위치 확인 중…":"퇴근하기"]),
-        el("span",{class:"sub"},[site.label+" 반경 "+state.config.radiusM+"m 이내에서 가능"])
+      nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("out", {isTrip:state.tripMode}); }},[
+        el("span",{},[state.busy?"확인 중…":"퇴근하기"]),
+        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : site.label+" 반경 "+state.config.radiusM+"m 이내에서 가능"])
       ]);
     } else {
       nextBtn = el("button",{class:"big-btn done", disabled:true},[
@@ -667,7 +682,7 @@
       return el("div",{class:"row card-tight", style:"border:1px solid var(--border);border-radius:10px;"},[
         el("div",{class:"col", style:"gap:2px;"},[
           el("span",{style:"font-weight:700;font-size:13px;"},[r.type==="in"?"출근":"퇴근"]),
-          el("span",{class:"faint num"},[r.time+" · "+r.distanceM+"m"])
+          el("span",{class:"faint num"},[r.time + (r.distanceM==null ? "" : " · "+r.distanceM+"m")])
         ]),
         StatusPill(r.status)
       ]);
@@ -682,6 +697,7 @@
           ]),
           el("span",{class:"badge-site"},[site.label])
         ]),
+        tripToggle,
         nextBtn
       ]),
       el("div",{class:"card"},[el("h3",{style:"font-size:14px;"},["오늘 기록"]), timeline]),
@@ -737,7 +753,7 @@
         onchange:function(ev){ adminUpdateRecord(r, { time: ev.target.value }); }});
       var statusSel = el("select",{style:"width:78px;padding:5px 6px;font-size:12px;",
         onchange:function(ev){ adminUpdateRecord(r, { status: ev.target.value }); }},
-        ["정상","지각","조퇴"].map(function(s){ return el("option",{value:s, selected:r.status===s},[s]); }));
+        ["정상","지각","조퇴","출장"].map(function(s){ return el("option",{value:s, selected:r.status===s},[s]); }));
       var cb = el("input",{type:"checkbox", checked:!!state.adminSelected[key],
         onchange:function(ev){ state.adminSelected[key] = ev.target.checked; render(); }});
       return el("tr",{},[
@@ -748,7 +764,7 @@
         el("td",{},[r.type==="in"?"출근":"퇴근"]),
         el("td",{},[timeInput]),
         el("td",{},[statusSel]),
-        el("td",{class:"num"},[String(r.distanceM)+"m"]),
+        el("td",{class:"num"},[r.distanceM==null ? "-" : String(r.distanceM)+"m"]),
         el("td",{},[el("button",{class:"btn btn-sm btn-danger", onclick:function(){ adminDeleteRecord(r); }},["삭제"])])
       ]);
     });
