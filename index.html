@@ -197,7 +197,8 @@
     adminSiteFilter: "all",
     adminRows: [],             // flattened rows for current admin month
     adminLoading: false,
-    empDraftId: null
+    empDraftId: null,
+    bulkAddOpen: false
   };
 
   function haversine(lat1,lng1,lat2,lng2){
@@ -458,6 +459,32 @@
       await db.doc("employees/"+empId).delete();
       toast("직원이 삭제되었어요.");
     }catch(e){ toast("삭제에 실패했어요. 관리자 계정으로 로그인했는지 확인해주세요."); }
+  }
+
+  function parseBulkEmployees(text){
+    var lines = text.split("\n").map(function(l){ return l.trim(); }).filter(function(l){ return l.length; });
+    var rows = [], errors = [];
+    lines.forEach(function(line, idx){
+      var parts = line.split(",").map(function(p){ return p.trim(); });
+      var empId = parts[0], name = parts[1], dept = parts[2] || "", siteRaw = (parts[3]||"").toLowerCase();
+      if(!empId || !name){ errors.push((idx+1)+"행: 사번/이름이 비어있어요 → \""+line+"\""); return; }
+      var site = (siteRaw==="대전" || siteRaw==="daejeon") ? "daejeon" : "seoul";
+      rows.push({ empId:empId, name:name, dept:dept, site:site });
+    });
+    return { rows:rows, errors:errors };
+  }
+
+  async function adminBulkAddEmployees(text){
+    var parsed = parseBulkEmployees(text);
+    if(parsed.errors.length){ toast("형식 오류 "+parsed.errors.length+"건:\n"+parsed.errors.slice(0,3).join("\n")); return false; }
+    if(!parsed.rows.length){ toast("추가할 내용이 없어요."); return false; }
+    try{
+      var batch = db.batch();
+      parsed.rows.forEach(function(e){ batch.set(db.doc("employees/"+e.empId), e); });
+      await batch.commit();
+      toast(parsed.rows.length+"명의 직원이 등록되었어요.");
+      return true;
+    }catch(e){ toast("일괄 등록에 실패했어요. 관리자 계정으로 로그인했는지 확인해주세요."); return false; }
   }
 
   async function seedInitialData(){
@@ -744,11 +771,30 @@
       ]);
     }
 
+    var bulkCard = null;
+    if(state.bulkAddOpen){
+      var bulkTa = el("textarea",{placeholder:"한 줄에 한 명씩, 쉼표로 구분해서 붙여넣으세요.\n예)\n3R0024,홍길동,개발팀,서울\n3R0025,김철수,영업팀,대전", style:"min-height:120px;"});
+      bulkCard = el("div",{class:"card card-tight", style:"border:1px dashed var(--border);"},[
+        el("div",{class:"muted"},["형식: 사번,이름,부서,지점(서울 또는 대전) — 한 줄에 한 명씩. 부서·지점은 비워두면 각각 미지정/서울로 들어가요."]),
+        bulkTa,
+        el("div",{class:"row"},[
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.bulkAddOpen=false; render(); }},["취소"]),
+          el("button",{class:"btn btn-primary btn-sm", onclick:function(){
+            adminBulkAddEmployees(bulkTa.value).then(function(ok){ if(ok){ state.bulkAddOpen=false; render(); } });
+          }},["일괄 등록"])
+        ])
+      ]);
+    }
+
     return el("div",{class:"card"},[
       el("div",{class:"row"},[
         el("h3",{style:"font-size:15px;"},["직원 관리"]),
-        el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId="__new__"; render(); }},["+ 직원 추가"])
+        el("div",{class:"row", style:"gap:6px;"},[
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.bulkAddOpen=!state.bulkAddOpen; state.empDraftId=null; render(); }},["여러 명 한꺼번에 추가"]),
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId="__new__"; state.bulkAddOpen=false; render(); }},["+ 직원 추가"])
+        ])
       ]),
+      bulkCard,
       formCard,
       el("div",{class:"col"}, list)
     ]);
