@@ -512,6 +512,14 @@
       root.appendChild(el("div",{class:"card"},[el("div",{class:"muted"},["불러오는 중…"])]));
       return;
     }
+
+    root.appendChild(Tabbar());
+
+    if(state.tab === "admin"){
+      root.appendChild(AdminScreen());
+      return;
+    }
+
     if(!state.myId){ root.appendChild(IdentityScreen()); return; }
     var emp = myEmployee();
     if(!emp){
@@ -524,9 +532,7 @@
     if(state.consent === undefined){ root.appendChild(el("div",{class:"card"},[el("div",{class:"muted"},["확인 중…"])])); return; }
     if(!state.consent){ root.appendChild(ConsentScreen(emp)); return; }
 
-    root.appendChild(Tabbar());
-    if(state.tab === "me") root.appendChild(MeScreen(emp));
-    else root.appendChild(AdminScreen());
+    root.appendChild(MeScreen(emp));
   }
 
   function Topbar(){
