@@ -133,6 +133,13 @@
   var TODAY_KEY = function(d){ d=d||new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
   var MONTH_KEY = function(d){ d=d||new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); };
   var HHMM = function(d){ d=d||new Date(); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); };
+  var shiftHHMM = function(hhmm, deltaMinutes){
+    var parts = (hhmm||"00:00").split(":");
+    var total = (parseInt(parts[0],10)||0)*60 + (parseInt(parts[1],10)||0) + deltaMinutes;
+    total = ((total % 1440) + 1440) % 1440;
+    var h = Math.floor(total/60), m = total%60;
+    return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+  };
   var LS_ID = "3ri_att_my_emp_id";
 
   var DEFAULT_CONFIG = {
@@ -141,7 +148,7 @@
       daejeon: { label:"대전 팁스타운", lat:36.3631304, lng:127.3469069 }
     },
     radiusM: 100,
-    workStart: "09:30",
+    workStart: "10:00",
     workEnd: "18:30",
     policyVersion: "2026-09-11",
     policyText:
@@ -656,6 +663,13 @@
     var hasIn = todays.some(function(r){ return r.type==="in"; });
     var hasOut = todays.some(function(r){ return r.type==="out"; });
 
+    var reminderTime = shiftHHMM(state.config.workStart, -15);
+    var showReminder = !hasIn && HHMM() >= reminderTime;
+    var reminderBanner = !showReminder ? null : el("div",{class:"card", style:"background:var(--warn-soft);border:1px solid var(--warn);"},[
+      el("div",{style:"font-weight:700;color:var(--warn);"},["⏰ 출근 체크 잊지 마세요"]),
+      el("div",{class:"muted", style:"font-size:13px;"},["근무 시작(" + state.config.workStart + ") 전후예요. 출근하기 버튼을 눌러 체크해주세요."])
+    ]);
+
     var tripToggle = el("label",{class:"row", style:"gap:8px;align-items:center;cursor:pointer;"},[
       el("input",{type:"checkbox", checked:state.tripMode, onchange:function(ev){ state.tripMode = ev.target.checked; render(); }}),
       el("span",{class:"muted", style:"font-size:13px;"},["출장 중이에요 (위치 확인 없이 체크)"])
@@ -689,6 +703,7 @@
     })) : el("div",{class:"muted"},["오늘 기록이 아직 없어요."]);
 
     return el("div",{class:"col", style:"gap:14px;"},[
+      reminderBanner,
       el("div",{class:"card"},[
         el("div",{class:"row"},[
           el("div",{class:"col",style:"gap:2px;"},[
@@ -919,6 +934,13 @@
     var clockEl = document.querySelector(".clock");
     if(clockEl) clockEl.textContent = HHMM()+":"+String(new Date().getSeconds()).padStart(2,"0");
   }, 1000);
+
+  // periodic full re-render so the check-in reminder banner appears on its own
+  // if the app is left open, without needing any user interaction.
+  setInterval(function(){
+    if(document.hidden) return;
+    if(state.tab === "me" && !state.busy) render();
+  }, 30000);
 
   render();
   initFirebase();
