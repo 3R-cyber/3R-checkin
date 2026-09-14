@@ -152,11 +152,11 @@
     workEnd: "18:30",
     policyVersion: "2026-09-11",
     policyText:
-"■ 위치기반 출퇴근관리 개인정보 수집·이용 동의서 (요약)\n\n" +
+"■ 사업장 네트워크 기반 출퇴근관리 개인정보 수집·이용 동의서 (요약)\n\n" +
 "1. 수집 목적: 사업장 출퇴근 여부 확인 및 근태관리\n" +
-"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 기기의 GPS 위치정보(위도·경도), 사업장과의 거리\n" +
+"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 네트워크(사무실 와이파이) 인식 여부. 출퇴근 체크 시 GPS 등 개인 위치좌표는 수집하지 않습니다.\n" +
 "3. 보유·이용 기간: 재직 기간 중 활용하며, 퇴사일로부터 3년간 보관 후 파기합니다(근로기준법상 근로자 명부·임금대장 보존 의무 기준).\n" +
-"4. 위치정보의 처리: 수집된 위치정보는 출퇴근 인정 여부 판단 목적으로만 사용하며, 회사는 「위치정보의 보호 및 이용 등에 관한 법률」을 준수하여 이를 처리합니다. 실시간 위치 추적이나 근무시간 외 위치 수집은 하지 않습니다.\n" +
+"4. 처리 방식: 접속 정보는 출퇴근 인정 여부 판단 목적으로만 사용하며, 회사는 관련 법령을 준수하여 이를 처리합니다. 근무시간 외에는 별도로 수집하지 않습니다.\n" +
 "5. 제3자 제공: 법령에 근거가 없는 한 수집한 정보를 외부에 제공하지 않습니다.\n" +
 "6. 동의 거부 권리 및 불이익: 위 동의는 원활한 근태관리를 위해 필요하며, 동의하지 않을 경우 본 시스템을 통한 출퇴근 체크가 제한되고 기존 방식(수기/구두 보고 등)으로 근태를 확인합니다.\n\n" +
 "위 내용을 확인하였으며 이에 동의합니다."
@@ -407,34 +407,21 @@
         var anyIpConfigured = Object.keys(state.config.sites).some(function(k){
           return String(state.config.sites[k].ip||"").trim().length > 0;
         });
-        var ipMatch = null;
-        if(anyIpConfigured){
-          var publicIp = await fetchPublicIP();
-          ipMatch = matchSiteByIP(publicIp);
+        if(!anyIpConfigured){
+          toast("관리자가 아직 사업장 와이파이를 설정하지 않았어요. 관리자에게 문의해주세요.", 4200);
+          state.busy = false; render(); return;
         }
-        if(ipMatch){
-          rec = {
-            date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
-            lat: null, lng: null, accuracy: null, distanceM: null, site: ipMatch.key,
-            method: "wifi", status: computeStatus(type, timeStr)
-          };
-        } else {
-          var pos = await getPosition();
-          var ranked = rankSites(pos.coords.latitude, pos.coords.longitude);
-          var nearest = ranked[0];
-          var radius = state.config.radiusM;
-          if(!nearest || nearest.dist > radius){
-            var distDesc = ranked.map(function(s){ return s.label+" 약 "+s.dist+"m"; }).join(" · ");
-            toast("어느 사업장에서도 반경 " + radius + "m 이내가 아니에요 (" + distDesc + "). 위치 확인이 어려우면 '출장' 체크를 이용해주세요.", 4600);
-            state.busy = false; render(); return;
-          }
-          rec = {
-            date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
-            lat: pos.coords.latitude, lng: pos.coords.longitude, site: nearest.key,
-            accuracy: Math.round(pos.coords.accuracy || 0), distanceM: nearest.dist,
-            method: "gps", status: computeStatus(type, timeStr)
-          };
+        var publicIp = await fetchPublicIP();
+        var ipMatch = matchSiteByIP(publicIp);
+        if(!ipMatch){
+          toast("사업장 와이파이에 연결된 상태에서만 체크할 수 있어요. 와이파이 연결을 확인하고 다시 시도해주세요. 외근·출장인 경우 '출장' 체크를 이용해주세요.", 4600);
+          state.busy = false; render(); return;
         }
+        rec = {
+          date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
+          lat: null, lng: null, accuracy: null, distanceM: null, site: ipMatch.key,
+          method: "wifi", status: computeStatus(type, timeStr)
+        };
       }
       var docId = state.myId + "_" + MONTH_KEY(now);
       var ref = db.doc("checkins/"+docId);
@@ -445,9 +432,7 @@
       if(snap.exists) await ref.update(body); else await ref.set(body);
       toast((type==="in" ? "출근" : "퇴근") + " 체크 완료 · " + timeStr + " · " + rec.status);
     }catch(err){
-      if(err && (err.code===1 || err.code==="PERMISSION_DENIED")) toast("위치 접근 권한이 필요해요. 브라우저 설정에서 위치 권한을 허용해주세요.", 4000);
-      else if(err && err.code==="unsupported") toast("이 브라우저에서는 위치 확인을 지원하지 않아요.");
-      else toast("위치를 확인하지 못했어요. GPS가 켜져 있는지 확인하고 다시 시도해주세요.", 3600);
+      toast("체크에 실패했어요. 인터넷 연결을 확인하고 다시 시도해주세요.", 3600);
     }
     state.busy = false; render();
   }
@@ -718,7 +703,12 @@
 
   function MeScreen(emp){
     var site = state.config.sites[emp.site] || {label: emp.site};
-    var allSiteLabels = Object.keys(state.config.sites).map(function(k){ return state.config.sites[k].label; }).join(" · ");
+    var anyIpConfigured = Object.keys(state.config.sites).some(function(k){
+      return String(state.config.sites[k].ip||"").trim().length > 0;
+    });
+    var checkHintText = anyIpConfigured
+      ? "사무실 와이파이에 연결돼 있어야 체크돼요"
+      : "관리자가 와이파이 설정을 완료해야 체크할 수 있어요";
     var todays = todaysRecords(state.myMonthDoc);
     var hasIn = todays.some(function(r){ return r.type==="in"; });
     var hasOut = todays.some(function(r){ return r.type==="out"; });
@@ -739,12 +729,12 @@
     if(!hasIn){
       nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("in", {isTrip:state.tripMode}); }},[
         el("span",{},[state.busy?"확인 중…":"출근하기"]),
-        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : allSiteLabels+" 중 반경 "+state.config.radiusM+"m 이내에서 가능"])
+        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : checkHintText])
       ]);
     } else if(!hasOut){
       nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("out", {isTrip:state.tripMode}); }},[
         el("span",{},[state.busy?"확인 중…":"퇴근하기"]),
-        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : allSiteLabels+" 중 반경 "+state.config.radiusM+"m 이내에서 가능"])
+        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : checkHintText])
       ]);
     } else {
       nextBtn = el("button",{class:"big-btn done", disabled:true},[
@@ -949,39 +939,30 @@
   function AdminSettingsCard(){
     var c = state.config;
     var mk = function(label, input){ return el("label",{class:"field"},[label, input]); };
-    var seoulLat = el("input",{type:"text", value:c.sites.seoul.lat});
-    var seoulLng = el("input",{type:"text", value:c.sites.seoul.lng});
     var seoulLabel = el("input",{type:"text", value:c.sites.seoul.label});
-    var seoulIp = el("input",{type:"text", value:c.sites.seoul.ip||"", placeholder:"예: 193.186.4.174 (쉼표로 여러개 가능, 비우면 미사용)"});
-    var daejeonLat = el("input",{type:"text", value:c.sites.daejeon.lat});
-    var daejeonLng = el("input",{type:"text", value:c.sites.daejeon.lng});
+    var seoulIp = el("input",{type:"text", value:c.sites.seoul.ip||"", placeholder:"예: 193.186.4.174 (쉼표로 여러개 가능)"});
     var daejeonLabel = el("input",{type:"text", value:c.sites.daejeon.label});
-    var daejeonIp = el("input",{type:"text", value:c.sites.daejeon.ip||"", placeholder:"예: 193.186.4.174 (쉼표로 여러개 가능, 비우면 미사용)"});
-    var radiusIn = el("input",{type:"number", value:c.radiusM});
+    var daejeonIp = el("input",{type:"text", value:c.sites.daejeon.ip||"", placeholder:"예: 193.186.4.174 (쉼표로 여러개 가능)"});
     var startIn = el("input",{type:"time", value:c.workStart});
     var endIn = el("input",{type:"time", value:c.workEnd});
     var policyIn = el("textarea",{}, [c.policyText]);
 
     return el("div",{class:"card"},[
       el("h3",{style:"font-size:15px;"},["설정"]),
+      el("div",{class:"muted", style:"font-size:12px;"},["출퇴근 체크는 사무실 와이파이(공인 IP) 인식 방식으로 동작해요. 사업장마다 와이파이 IP를 반드시 입력해주세요 — 비워두면 그 사업장은 체크가 안 돼요."]),
       el("div",{class:"muted"},["서울 사업장"]),
-      el("div",{class:"grid2"},[mk("명칭", seoulLabel), mk("반경(m)", radiusIn)]),
-      el("div",{class:"grid2"},[mk("위도", seoulLat), mk("경도", seoulLng)]),
-      mk("사무실 와이파이 공인 IP (선택)", seoulIp),
+      el("div",{class:"grid2"},[mk("명칭", seoulLabel), mk("와이파이 공인 IP", seoulIp)]),
       el("div",{class:"muted"},["대전 사업장"]),
-      el("div",{class:"grid2"},[mk("명칭", daejeonLabel), mk("근무 시작", startIn)]),
-      el("div",{class:"grid2"},[mk("위도", daejeonLat), mk("경도", daejeonLng)]),
-      el("div",{class:"grid2"},[mk("근무 종료", endIn)]),
-      mk("사무실 와이파이 공인 IP (선택)", daejeonIp),
-      el("div",{class:"muted", style:"font-size:12px;"},["와이파이 IP를 입력해두면, 그 IP로 접속했을 때 위치 확인(GPS) 없이 바로 출퇴근 체크가 돼요. 단, VPN/보안 프로그램을 쓰면 다른 사람도 같은 IP로 보일 수 있어 GPS보다 보안은 약할 수 있어요."]),
+      el("div",{class:"grid2"},[mk("명칭", daejeonLabel), mk("와이파이 공인 IP", daejeonIp)]),
+      el("div",{class:"grid2"},[mk("근무 시작", startIn), mk("근무 종료", endIn)]),
       mk("개인정보 동의 안내문", policyIn),
       el("button",{class:"btn btn-primary", onclick:function(){
         adminSaveSettings({
           sites: {
-            seoul:{ label:seoulLabel.value, lat:parseFloat(seoulLat.value), lng:parseFloat(seoulLng.value), ip:seoulIp.value.trim() },
-            daejeon:{ label:daejeonLabel.value, lat:parseFloat(daejeonLat.value), lng:parseFloat(daejeonLng.value), ip:daejeonIp.value.trim() }
+            seoul:{ label:seoulLabel.value, lat:c.sites.seoul.lat, lng:c.sites.seoul.lng, ip:seoulIp.value.trim() },
+            daejeon:{ label:daejeonLabel.value, lat:c.sites.daejeon.lat, lng:c.sites.daejeon.lng, ip:daejeonIp.value.trim() }
           },
-          radiusM: parseInt(radiusIn.value,10) || 100,
+          radiusM: c.radiusM,
           workStart: startIn.value, workEnd: endIn.value,
           policyText: policyIn.value,
           policyVersion: c.policyVersion
