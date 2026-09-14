@@ -217,6 +217,15 @@
     return Math.round(R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)));
   }
 
+  // returns every configured site's distance from (lat,lng), nearest first
+  function rankSites(lat, lng){
+    var sites = state.config.sites || {};
+    return Object.keys(sites).map(function(key){
+      var s = sites[key];
+      return { key:key, label:s.label, dist: haversine(lat, lng, s.lat, s.lng) };
+    }).sort(function(a,b){ return a.dist - b.dist; });
+  }
+
   function toast(msg, ms){
     var root = document.getElementById("toast-root");
     var el = document.createElement("div");
@@ -362,11 +371,12 @@
         };
       } else {
         var pos = await getPosition();
-        var site = state.config.sites[emp.site];
-        var dist = haversine(pos.coords.latitude, pos.coords.longitude, site.lat, site.lng);
+        var ranked = rankSites(pos.coords.latitude, pos.coords.longitude);
+        var nearest = ranked[0];
         var radius = state.config.radiusM;
-        if(dist > radius){
-          toast("사업장(" + site.label + ")에서 약 " + dist + "m 떨어져 있어요. 반경 " + radius + "m 이내에서 다시 시도해주세요. 위치 확인이 어려우면 '출장' 체크를 이용해주세요.", 4600);
+        if(!nearest || nearest.dist > radius){
+          var distDesc = ranked.map(function(s){ return s.label+" 약 "+s.dist+"m"; }).join(" · ");
+          toast("어느 사업장에서도 반경 " + radius + "m 이내가 아니에요 (" + distDesc + "). 위치 확인이 어려우면 '출장' 체크를 이용해주세요.", 4600);
           state.busy = false; render(); return;
         }
         var status = type === "in"
@@ -374,8 +384,8 @@
           : (timeStr < state.config.workEnd ? "조퇴" : "정상");
         rec = {
           date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
-          lat: pos.coords.latitude, lng: pos.coords.longitude,
-          accuracy: Math.round(pos.coords.accuracy || 0), distanceM: dist, status: status
+          lat: pos.coords.latitude, lng: pos.coords.longitude, site: nearest.key,
+          accuracy: Math.round(pos.coords.accuracy || 0), distanceM: nearest.dist, status: status
         };
       }
       var docId = state.myId + "_" + MONTH_KEY(now);
@@ -420,7 +430,7 @@
         if(!s.exists) return;
         var d = s.data();
         (d.records||[]).forEach(function(r, idx){
-          rows.push(Object.assign({}, r, { empId:d.empId, name:d.name, dept:d.dept, site:d.site, _docId:s.id, _idx:idx }));
+          rows.push(Object.assign({}, r, { empId:d.empId, name:d.name, dept:d.dept, site:(r.site||d.site), _docId:s.id, _idx:idx }));
         });
       });
       rows.sort(function(a,b){ return (b.ts||"").localeCompare(a.ts||""); });
@@ -659,6 +669,7 @@
 
   function MeScreen(emp){
     var site = state.config.sites[emp.site] || {label: emp.site};
+    var allSiteLabels = Object.keys(state.config.sites).map(function(k){ return state.config.sites[k].label; }).join(" · ");
     var todays = todaysRecords(state.myMonthDoc);
     var hasIn = todays.some(function(r){ return r.type==="in"; });
     var hasOut = todays.some(function(r){ return r.type==="out"; });
@@ -679,12 +690,12 @@
     if(!hasIn){
       nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("in", {isTrip:state.tripMode}); }},[
         el("span",{},[state.busy?"확인 중…":"출근하기"]),
-        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : site.label+" 반경 "+state.config.radiusM+"m 이내에서 가능"])
+        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : allSiteLabels+" 중 반경 "+state.config.radiusM+"m 이내에서 가능"])
       ]);
     } else if(!hasOut){
       nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("out", {isTrip:state.tripMode}); }},[
         el("span",{},[state.busy?"확인 중…":"퇴근하기"]),
-        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : site.label+" 반경 "+state.config.radiusM+"m 이내에서 가능"])
+        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : allSiteLabels+" 중 반경 "+state.config.radiusM+"m 이내에서 가능"])
       ]);
     } else {
       nextBtn = el("button",{class:"big-btn done", disabled:true},[
@@ -693,10 +704,11 @@
     }
 
     var timeline = todays.length ? el("div",{class:"col"}, todays.map(function(r){
+      var recSite = r.site && state.config.sites[r.site] ? state.config.sites[r.site].label : null;
       return el("div",{class:"row card-tight", style:"border:1px solid var(--border);border-radius:10px;"},[
         el("div",{class:"col", style:"gap:2px;"},[
           el("span",{style:"font-weight:700;font-size:13px;"},[r.type==="in"?"출근":"퇴근"]),
-          el("span",{class:"faint num"},[r.time + (r.distanceM==null ? "" : " · "+r.distanceM+"m")])
+          el("span",{class:"faint num"},[r.time + (r.distanceM==null ? "" : " · "+r.distanceM+"m") + (recSite ? " · "+recSite : "")])
         ]),
         StatusPill(r.status)
       ]);
