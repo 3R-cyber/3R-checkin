@@ -248,6 +248,19 @@
   }
 
   // checks a fetched public IP against each site's configured allow-list (comma-separated in config.sites[key].ip)
+  // supports an exact IP ("193.186.4.174") or a wildcard octet pattern ("121.138.152.*")
+  function ipMatchesPattern(ip, pattern){
+    if(!ip || !pattern) return false;
+    if(pattern.indexOf("*") === -1) return ip === pattern;
+    var patternParts = pattern.split(".");
+    var ipParts = ip.split(".");
+    if(patternParts.length !== ipParts.length) return false;
+    for(var i=0;i<patternParts.length;i++){
+      if(patternParts[i] !== "*" && patternParts[i] !== ipParts[i]) return false;
+    }
+    return true;
+  }
+
   function matchSiteByIP(ip){
     if(!ip) return null;
     var sites = state.config.sites || {};
@@ -255,7 +268,9 @@
     for(var i=0;i<keys.length;i++){
       var key = keys[i];
       var list = String(sites[key].ip||"").split(",").map(function(s){ return s.trim(); }).filter(Boolean);
-      if(list.indexOf(ip)!==-1) return { key:key, label: sites[key].label };
+      for(var j=0;j<list.length;j++){
+        if(ipMatchesPattern(ip, list[j])) return { key:key, label: sites[key].label };
+      }
     }
     return null;
   }
@@ -940,9 +955,9 @@
     var c = state.config;
     var mk = function(label, input){ return el("label",{class:"field"},[label, input]); };
     var seoulLabel = el("input",{type:"text", value:c.sites.seoul.label});
-    var seoulIp = el("input",{type:"text", value:c.sites.seoul.ip||"", placeholder:"예: 193.186.4.174 (쉼표로 여러개 가능)"});
+    var seoulIp = el("input",{type:"text", value:c.sites.seoul.ip||"", placeholder:"예: 193.186.4.174 또는 121.138.152.* (쉼표로 여러개 가능)"});
     var daejeonLabel = el("input",{type:"text", value:c.sites.daejeon.label});
-    var daejeonIp = el("input",{type:"text", value:c.sites.daejeon.ip||"", placeholder:"예: 193.186.4.174 (쉼표로 여러개 가능)"});
+    var daejeonIp = el("input",{type:"text", value:c.sites.daejeon.ip||"", placeholder:"예: 193.186.4.174 또는 121.138.152.* (쉼표로 여러개 가능)"});
     var startIn = el("input",{type:"time", value:c.workStart});
     var endIn = el("input",{type:"time", value:c.workEnd});
     var policyIn = el("textarea",{}, [c.policyText]);
