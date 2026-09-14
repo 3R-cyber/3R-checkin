@@ -144,8 +144,8 @@
 
   var DEFAULT_CONFIG = {
     sites: {
-      seoul:   { label:"서울 AI 허브", lat:37.465949,  lng:127.0359951 },
-      daejeon: { label:"대전 팁스타운", lat:36.3631304, lng:127.3469069 }
+      seoul:   { label:"서울 AI 허브", lat:37.465949,  lng:127.0359951, ip:"" },
+      daejeon: { label:"대전 팁스타운", lat:36.3631304, lng:127.3469069, ip:"" }
     },
     radiusM: 100,
     workStart: "10:00",
@@ -224,6 +224,40 @@
       var s = sites[key];
       return { key:key, label:s.label, dist: haversine(lat, lng, s.lat, s.lng) };
     }).sort(function(a,b){ return a.dist - b.dist; });
+  }
+
+  function computeStatus(type, timeStr){
+    return type === "in"
+      ? (timeStr > state.config.workStart ? "지각" : "정상")
+      : (timeStr < state.config.workEnd ? "조퇴" : "정상");
+  }
+
+  // asks a public IP-echo service what public IP this browser is exiting through.
+  // used to recognize "connected to the office network" without needing GPS.
+  // returns null (never throws) if the request fails, times out, or is unavailable.
+  async function fetchPublicIP(){
+    try{
+      var ctrl = (typeof AbortController !== "undefined") ? new AbortController() : null;
+      var timer = ctrl ? setTimeout(function(){ ctrl.abort(); }, 4000) : null;
+      var res = await fetch("https://api.ipify.org?format=json", ctrl ? {signal: ctrl.signal} : {});
+      if(timer) clearTimeout(timer);
+      if(!res.ok) return null;
+      var data = await res.json();
+      return (data && data.ip) ? data.ip : null;
+    }catch(e){ return null; }
+  }
+
+  // checks a fetched public IP against each site's configured allow-list (comma-separated in config.sites[key].ip)
+  function matchSiteByIP(ip){
+    if(!ip) return null;
+    var sites = state.config.sites || {};
+    var keys = Object.keys(sites);
+    for(var i=0;i<keys.length;i++){
+      var key = keys[i];
+      var list = String(sites[key].ip||"").split(",").map(function(s){ return s.trim(); }).filter(Boolean);
+      if(list.indexOf(ip)!==-1) return { key:key, label: sites[key].label };
+    }
+    return null;
   }
 
   function toast(msg, ms){
@@ -370,23 +404,37 @@
           lat: null, lng: null, accuracy: null, distanceM: null, status: "출장"
         };
       } else {
-        var pos = await getPosition();
-        var ranked = rankSites(pos.coords.latitude, pos.coords.longitude);
-        var nearest = ranked[0];
-        var radius = state.config.radiusM;
-        if(!nearest || nearest.dist > radius){
-          var distDesc = ranked.map(function(s){ return s.label+" 약 "+s.dist+"m"; }).join(" · ");
-          toast("어느 사업장에서도 반경 " + radius + "m 이내가 아니에요 (" + distDesc + "). 위치 확인이 어려우면 '출장' 체크를 이용해주세요.", 4600);
-          state.busy = false; render(); return;
+        var anyIpConfigured = Object.keys(state.config.sites).some(function(k){
+          return String(state.config.sites[k].ip||"").trim().length > 0;
+        });
+        var ipMatch = null;
+        if(anyIpConfigured){
+          var publicIp = await fetchPublicIP();
+          ipMatch = matchSiteByIP(publicIp);
         }
-        var status = type === "in"
-          ? (timeStr > state.config.workStart ? "지각" : "정상")
-          : (timeStr < state.config.workEnd ? "조퇴" : "정상");
-        rec = {
-          date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
-          lat: pos.coords.latitude, lng: pos.coords.longitude, site: nearest.key,
-          accuracy: Math.round(pos.coords.accuracy || 0), distanceM: nearest.dist, status: status
-        };
+        if(ipMatch){
+          rec = {
+            date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
+            lat: null, lng: null, accuracy: null, distanceM: null, site: ipMatch.key,
+            method: "wifi", status: computeStatus(type, timeStr)
+          };
+        } else {
+          var pos = await getPosition();
+          var ranked = rankSites(pos.coords.latitude, pos.coords.longitude);
+          var nearest = ranked[0];
+          var radius = state.config.radiusM;
+          if(!nearest || nearest.dist > radius){
+            var distDesc = ranked.map(function(s){ return s.label+" 약 "+s.dist+"m"; }).join(" · ");
+            toast("어느 사업장에서도 반경 " + radius + "m 이내가 아니에요 (" + distDesc + "). 위치 확인이 어려우면 '출장' 체크를 이용해주세요.", 4600);
+            state.busy = false; render(); return;
+          }
+          rec = {
+            date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
+            lat: pos.coords.latitude, lng: pos.coords.longitude, site: nearest.key,
+            accuracy: Math.round(pos.coords.accuracy || 0), distanceM: nearest.dist,
+            method: "gps", status: computeStatus(type, timeStr)
+          };
+        }
       }
       var docId = state.myId + "_" + MONTH_KEY(now);
       var ref = db.doc("checkins/"+docId);
@@ -565,7 +613,8 @@
         "날짜": r.date, "사번": r.empId, "이름": r.name, "부서": r.dept||"",
         "지점": state.config.sites[r.site] ? state.config.sites[r.site].label : r.site,
         "구분": r.type==="in" ? "출근" : "퇴근", "시각": r.time, "상태": r.status,
-        "거리(m)": r.distanceM==null ? "-" : r.distanceM, "위도": r.lat==null ? "" : r.lat, "경도": r.lng==null ? "" : r.lng,
+        "거리(m)": r.method==="wifi" ? "와이파이" : (r.distanceM==null ? "-" : r.distanceM), "위도": r.lat==null ? "" : r.lat, "경도": r.lng==null ? "" : r.lng,
+        "확인방식": r.method==="wifi" ? "와이파이" : (r.method==="gps" ? "GPS" : (r.status==="출장" ? "출장(자가신고)" : "")),
         "수정자": r.editedBy||"", "수정시각": r.editedAt||""
       };
     });
@@ -705,10 +754,14 @@
 
     var timeline = todays.length ? el("div",{class:"col"}, todays.map(function(r){
       var recSite = r.site && state.config.sites[r.site] ? state.config.sites[r.site].label : null;
+      var parts = [r.time];
+      if(r.method==="wifi") parts.push("와이파이 인식");
+      else if(r.distanceM!=null) parts.push(r.distanceM+"m");
+      if(recSite) parts.push(recSite);
       return el("div",{class:"row card-tight", style:"border:1px solid var(--border);border-radius:10px;"},[
         el("div",{class:"col", style:"gap:2px;"},[
           el("span",{style:"font-weight:700;font-size:13px;"},[r.type==="in"?"출근":"퇴근"]),
-          el("span",{class:"faint num"},[r.time + (r.distanceM==null ? "" : " · "+r.distanceM+"m") + (recSite ? " · "+recSite : "")])
+          el("span",{class:"faint num"},[parts.join(" · ")])
         ]),
         StatusPill(r.status)
       ]);
@@ -791,7 +844,7 @@
         el("td",{},[r.type==="in"?"출근":"퇴근"]),
         el("td",{},[timeInput]),
         el("td",{},[statusSel]),
-        el("td",{class:"num"},[r.distanceM==null ? "-" : String(r.distanceM)+"m"]),
+        el("td",{class:"num"},[r.method==="wifi" ? "와이파이" : (r.distanceM==null ? "-" : String(r.distanceM)+"m")]),
         el("td",{},[el("button",{class:"btn btn-sm btn-danger", onclick:function(){ adminDeleteRecord(r); }},["삭제"])])
       ]);
     });
@@ -899,9 +952,11 @@
     var seoulLat = el("input",{type:"text", value:c.sites.seoul.lat});
     var seoulLng = el("input",{type:"text", value:c.sites.seoul.lng});
     var seoulLabel = el("input",{type:"text", value:c.sites.seoul.label});
+    var seoulIp = el("input",{type:"text", value:c.sites.seoul.ip||"", placeholder:"예: 193.186.4.174 (쉼표로 여러개 가능, 비우면 미사용)"});
     var daejeonLat = el("input",{type:"text", value:c.sites.daejeon.lat});
     var daejeonLng = el("input",{type:"text", value:c.sites.daejeon.lng});
     var daejeonLabel = el("input",{type:"text", value:c.sites.daejeon.label});
+    var daejeonIp = el("input",{type:"text", value:c.sites.daejeon.ip||"", placeholder:"예: 193.186.4.174 (쉼표로 여러개 가능, 비우면 미사용)"});
     var radiusIn = el("input",{type:"number", value:c.radiusM});
     var startIn = el("input",{type:"time", value:c.workStart});
     var endIn = el("input",{type:"time", value:c.workEnd});
@@ -912,16 +967,19 @@
       el("div",{class:"muted"},["서울 사업장"]),
       el("div",{class:"grid2"},[mk("명칭", seoulLabel), mk("반경(m)", radiusIn)]),
       el("div",{class:"grid2"},[mk("위도", seoulLat), mk("경도", seoulLng)]),
+      mk("사무실 와이파이 공인 IP (선택)", seoulIp),
       el("div",{class:"muted"},["대전 사업장"]),
       el("div",{class:"grid2"},[mk("명칭", daejeonLabel), mk("근무 시작", startIn)]),
       el("div",{class:"grid2"},[mk("위도", daejeonLat), mk("경도", daejeonLng)]),
       el("div",{class:"grid2"},[mk("근무 종료", endIn)]),
+      mk("사무실 와이파이 공인 IP (선택)", daejeonIp),
+      el("div",{class:"muted", style:"font-size:12px;"},["와이파이 IP를 입력해두면, 그 IP로 접속했을 때 위치 확인(GPS) 없이 바로 출퇴근 체크가 돼요. 단, VPN/보안 프로그램을 쓰면 다른 사람도 같은 IP로 보일 수 있어 GPS보다 보안은 약할 수 있어요."]),
       mk("개인정보 동의 안내문", policyIn),
       el("button",{class:"btn btn-primary", onclick:function(){
         adminSaveSettings({
           sites: {
-            seoul:{ label:seoulLabel.value, lat:parseFloat(seoulLat.value), lng:parseFloat(seoulLng.value) },
-            daejeon:{ label:daejeonLabel.value, lat:parseFloat(daejeonLat.value), lng:parseFloat(daejeonLng.value) }
+            seoul:{ label:seoulLabel.value, lat:parseFloat(seoulLat.value), lng:parseFloat(seoulLng.value), ip:seoulIp.value.trim() },
+            daejeon:{ label:daejeonLabel.value, lat:parseFloat(daejeonLat.value), lng:parseFloat(daejeonLng.value), ip:daejeonIp.value.trim() }
           },
           radiusM: parseInt(radiusIn.value,10) || 100,
           workStart: startIn.value, workEnd: endIn.value,
