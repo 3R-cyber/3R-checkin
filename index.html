@@ -220,7 +220,6 @@
     bulkAddOpen: false,
     bulkEmailOpen: false,
     adminSelected: {},
-    tripMode: false,
     confirmingCheckout: false  // "퇴근하기"는 실수로 누르면 되돌리기 번거로우니 한 번 더 확인받는다
   };
 
@@ -561,42 +560,33 @@
     });
   }
 
-  async function doCheck(type, opts){
+  async function doCheck(type){
     var emp = myEmployee(); if(!emp || state.busy) return;
-    var isTrip = !!(opts && opts.isTrip);
     state.busy = true; render();
     try{
       var now = new Date();
       var timeStr = HHMM(now);
       var rec;
-      if(isTrip){
-        rec = {
-          date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
-          lat: null, lng: null, accuracy: null, distanceM: null, status: "출장",
-          device: getDeviceId()
-        };
-      } else {
-        var anyIpConfigured = Object.keys(state.config.sites).some(function(k){
-          return String(state.config.sites[k].ip||"").trim().length > 0;
-        });
-        if(!anyIpConfigured){
-          toast("관리자가 아직 사업장 와이파이를 설정하지 않았어요. 관리자에게 문의해주세요.", 4200);
-          state.busy = false; render(); return;
-        }
-        var publicIp = await fetchPublicIP();
-        var ipMatch = matchSiteByIP(publicIp);
-        if(!ipMatch){
-          toast("사업장 와이파이에 연결된 상태에서만 체크할 수 있어요. 와이파이 연결을 확인하고 다시 시도해주세요. 외근·출장인 경우 '출장' 체크를 이용해주세요.", 4600);
-          state.busy = false; render(); return;
-        }
-        var hours = effectiveHours(emp);
-        rec = {
-          date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
-          lat: null, lng: null, accuracy: null, distanceM: null, site: ipMatch.key,
-          method: "wifi", status: computeStatus(type, timeStr, hours.start, hours.end),
-          device: getDeviceId(), ip: publicIp || null
-        };
+      var anyIpConfigured = Object.keys(state.config.sites).some(function(k){
+        return String(state.config.sites[k].ip||"").trim().length > 0;
+      });
+      if(!anyIpConfigured){
+        toast("관리자가 아직 사업장 와이파이를 설정하지 않았어요. 관리자에게 문의해주세요.", 4200);
+        state.busy = false; render(); return;
       }
+      var publicIp = await fetchPublicIP();
+      var ipMatch = matchSiteByIP(publicIp);
+      if(!ipMatch){
+        toast("사업장 와이파이에 연결된 상태에서만 체크할 수 있어요. 와이파이 연결을 확인하고 다시 시도해주세요.", 4600);
+        state.busy = false; render(); return;
+      }
+      var hours = effectiveHours(emp);
+      rec = {
+        date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
+        lat: null, lng: null, accuracy: null, distanceM: null, site: ipMatch.key,
+        method: "wifi", status: computeStatus(type, timeStr, hours.start, hours.end),
+        device: getDeviceId(), ip: publicIp || null
+      };
       var docId = state.myId + "_" + MONTH_KEY(now);
       var ref = db.doc("checkins/"+docId);
       var snap = await ref.get();
@@ -957,7 +947,7 @@
         "날짜": r.date, "사번": r.empId, "이름": r.name, "부서": r.dept||"",
         "지점": state.config.sites[r.site] ? state.config.sites[r.site].label : (r.site||""),
         "구분": r.type==="in" ? "출근" : "퇴근", "시각": r.time, "상태": r.status,
-        "확인방식": r.method==="wifi" ? "와이파이" : (r.method==="gps" ? "GPS" : (r.status==="출장" ? "출장(자가신고)" : (r.distanceM!=null ? "GPS" : ""))),
+        "확인방식": r.method==="wifi" ? "와이파이" : (r.method==="gps" ? "GPS" : (r.distanceM!=null ? "GPS" : "")),
         "이메일": emailByEmpId[r.empId] || "",
         "수정자": r.editedBy||"", "수정시각": r.editedAt||""
       };
@@ -974,9 +964,8 @@
     // ---- 요약: per-employee monthly totals, ready to hand over as a report ----
     var byEmp = {};
     rows.forEach(function(r){
-      var e = byEmp[r.empId] = byEmp[r.empId] || { empId:r.empId, name:r.name, dept:r.dept||"", site:r.site, inDates:{}, late:0, early:0, tripDates:{} };
-      if(r.status === "출장") e.tripDates[r.date] = true;
-      if(r.type === "in" && r.status !== "출장"){
+      var e = byEmp[r.empId] = byEmp[r.empId] || { empId:r.empId, name:r.name, dept:r.dept||"", site:r.site, inDates:{}, late:0, early:0 };
+      if(r.type === "in"){
         e.inDates[r.date] = true;
         if(r.status === "지각") e.late++;
       }
@@ -988,11 +977,11 @@
         "사번": e.empId, "이름": e.name, "부서": e.dept,
         "지점": state.config.sites[e.site] ? state.config.sites[e.site].label : (e.site||""),
         "출근일수": Object.keys(e.inDates).length,
-        "지각": e.late, "조퇴": e.early, "출장일수": Object.keys(e.tripDates).length
+        "지각": e.late, "조퇴": e.early
       };
     }).sort(function(a,b){ return String(a["이름"]||"").localeCompare(String(b["이름"]||""), "ko"); });
-    var summaryHeaders = ["사번","이름","부서","지점","출근일수","지각","조퇴","출장일수"];
-    var summaryWidths  = [9, 9, 16, 10, 9, 7, 7, 9];
+    var summaryHeaders = ["사번","이름","부서","지점","출근일수","지각","조퇴"];
+    var summaryWidths  = [9, 9, 16, 10, 9, 7, 7];
 
     try{
       var wb = XLSX.utils.book_new();
@@ -1121,16 +1110,11 @@
       el("div",{class:"muted", style:"font-size:13px;"},["근무 시작(" + hours.start + ") 전후예요. 출근하기 버튼을 눌러 체크해주세요."])
     ]);
 
-    var tripToggle = el("label",{class:"row", style:"gap:8px;align-items:center;cursor:pointer;"},[
-      el("input",{type:"checkbox", checked:state.tripMode, onchange:function(ev){ state.tripMode = ev.target.checked; render(); }}),
-      el("span",{class:"muted", style:"font-size:13px;"},["출장 중이에요 (위치 확인 없이 체크)"])
-    ]);
-
     var nextBtn;
     if(!hasIn){
-      nextBtn = el("button",{class:"big-btn checkin", disabled:state.busy, onclick:function(){ doCheck("in", {isTrip:state.tripMode}); }},[
+      nextBtn = el("button",{class:"big-btn checkin", disabled:state.busy, onclick:function(){ doCheck("in"); }},[
         el("span",{},[state.busy?"확인 중…":"출근하기"]),
-        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : checkHintText])
+        el("span",{class:"sub"},[checkHintText])
       ]);
     } else if(!hasOut){
       if(state.confirmingCheckout){
@@ -1143,14 +1127,14 @@
             el("button",{class:"btn btn-ghost", style:"flex:1;", disabled:state.busy, onclick:function(){ state.confirmingCheckout=false; render(); }},["취소"]),
             el("button",{class:"btn btn-bad", style:"flex:1;", disabled:state.busy, onclick:function(){
               state.confirmingCheckout=false;
-              doCheck("out", {isTrip:state.tripMode});
+              doCheck("out");
             }},[state.busy?"확인 중…":"네, 퇴근할게요"])
           ])
         ]);
       } else {
         nextBtn = el("button",{class:"big-btn checkout", disabled:state.busy, onclick:function(){ state.confirmingCheckout=true; render(); }},[
           el("span",{},["퇴근하기"]),
-          el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : checkHintText])
+          el("span",{class:"sub"},[checkHintText])
         ]);
       }
     } else {
@@ -1185,7 +1169,6 @@
           ]),
           el("span",{class:"badge-site"},[site.label])
         ]),
-        tripToggle,
         nextBtn
       ]),
       el("div",{class:"card"},[el("h3",{style:"font-size:14px;"},["오늘 기록"]), timeline]),
@@ -1264,7 +1247,7 @@
         onchange:function(ev){ adminUpdateRecord(r, { time: ev.target.value }); }});
       var statusSel = el("select",{style:"width:78px;padding:5px 6px;font-size:12px;",
         onchange:function(ev){ adminUpdateRecord(r, { status: ev.target.value }); }},
-        ["정상","지각","조퇴","출장"].map(function(s){ return el("option",{value:s, selected:r.status===s},[s]); }));
+        ["정상","지각","조퇴"].map(function(s){ return el("option",{value:s, selected:r.status===s},[s]); }));
       var cb = el("input",{type:"checkbox", checked:!!state.adminSelected[key],
         onchange:function(ev){ state.adminSelected[key] = ev.target.checked; render(); }});
       var isSuspect = !!(r.device && suspects[r.device]);
