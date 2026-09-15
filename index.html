@@ -14,7 +14,7 @@
     --accent:#0E7C86; --accent-ink:#FFFFFF; --accent-soft:#E1F1F1;
     --ok:#1D9D5B; --ok-soft:#E4F8ED;
     --warn:#C6790A; --warn-soft:#FBEDD9;
-    --bad:#D6473F; --bad-soft:#FBE7E5;
+    --bad:#D6473F; --bad-soft:#FBE7E5; --bad-ink:#FFFFFF;
     --shadow: 0 1px 2px rgba(20,30,40,.04), 0 8px 20px -12px rgba(20,30,40,.18);
     --font-head:'Gowun Sans', 'Noto Sans KR', sans-serif;
     --font-body:'Noto Sans KR', -apple-system, sans-serif;
@@ -27,7 +27,7 @@
       --accent:#3FC1CB; --accent-ink:#08262A; --accent-soft:#173339;
       --ok:#49C787; --ok-soft:#123625;
       --warn:#E2A23D; --warn-soft:#3A2C10;
-      --bad:#F0736B; --bad-soft:#3A1917;
+      --bad:#F0736B; --bad-soft:#3A1917; --bad-ink:#2A0806;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
     }
   }
@@ -37,7 +37,7 @@
     --accent:#3FC1CB; --accent-ink:#08262A; --accent-soft:#173339;
     --ok:#49C787; --ok-soft:#123625;
     --warn:#E2A23D; --warn-soft:#3A2C10;
-    --bad:#F0736B; --bad-soft:#3A1917;
+    --bad:#F0736B; --bad-soft:#3A1917; --bad-ink:#2A0806;
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
   }
   *{box-sizing:border-box;}
@@ -82,12 +82,14 @@
   .btn-ghost{background:var(--surface-2); color:var(--ink);}
   .btn-sm{padding:8px 12px; font-size:13px; border-radius:9px;}
   .btn-danger{background:var(--bad-soft); color:var(--bad);}
+  .btn-bad{background:var(--bad); color:var(--bad-ink);}
+  .btn-bad:disabled{opacity:.45; cursor:not-allowed;}
   .checkbox-row{display:flex; align-items:flex-start; gap:10px; font-size:13px; line-height:1.55; color:var(--ink);}
   .checkbox-row input{margin-top:3px;}
   .policy-box{max-height:220px; overflow-y:auto; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; font-size:12.5px; line-height:1.7; color:var(--ink-muted); white-space:pre-wrap;}
   .big-btn{width:100%; padding:26px 18px; border-radius:20px; border:none; font-family:var(--font-head); font-weight:800; font-size:19px; display:flex; flex-direction:column; align-items:center; gap:6px;}
   .big-btn .sub{font-family:var(--font-body); font-weight:500; font-size:12.5px; opacity:.85;}
-  .big-btn.go{background:var(--accent); color:var(--accent-ink);}
+  .big-btn.go{background:var(--bad); color:var(--bad-ink);}
   .big-btn.done{background:var(--surface-2); color:var(--ink-faint);}
   table{width:100%; border-collapse:collapse; font-size:12.5px;}
   th,td{padding:8px 7px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap;}
@@ -214,7 +216,8 @@
     bulkAddOpen: false,
     bulkEmailOpen: false,
     adminSelected: {},
-    tripMode: false
+    tripMode: false,
+    confirmingCheckout: false  // "퇴근하기"는 실수로 누르면 되돌리기 번거로우니 한 번 더 확인받는다
   };
 
   function haversine(lat1,lng1,lat2,lng2){
@@ -439,6 +442,7 @@
   function employeeSignOut(){
     state.myId = ""; state.googleUnmatched = false;
     state.consent = undefined; state.myMonthDoc = null;
+    state.confirmingCheckout = false;
     auth.signOut().then(function(){ return auth.signInAnonymously(); }).catch(function(){});
     render();
   }
@@ -1125,10 +1129,26 @@
         el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : checkHintText])
       ]);
     } else if(!hasOut){
-      nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ doCheck("out", {isTrip:state.tripMode}); }},[
-        el("span",{},[state.busy?"확인 중…":"퇴근하기"]),
-        el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : checkHintText])
-      ]);
+      if(state.confirmingCheckout){
+        // one extra tap before the check-out actually commits — a mis-tap on
+        // "퇴근하기" is annoying to undo (admin has to edit the record), so we
+        // make sure it was intentional before calling doCheck.
+        nextBtn = el("div",{class:"card card-tight", style:"background:var(--bad-soft);border:1px solid var(--bad);align-items:center;text-align:center;"},[
+          el("div",{style:"font-weight:800;color:var(--bad);font-family:var(--font-head);"},["정말로 퇴근하시겠어요?"]),
+          el("div",{class:"row", style:"gap:8px;width:100%;"},[
+            el("button",{class:"btn btn-ghost", style:"flex:1;", disabled:state.busy, onclick:function(){ state.confirmingCheckout=false; render(); }},["취소"]),
+            el("button",{class:"btn btn-bad", style:"flex:1;", disabled:state.busy, onclick:function(){
+              state.confirmingCheckout=false;
+              doCheck("out", {isTrip:state.tripMode});
+            }},[state.busy?"확인 중…":"네, 퇴근할게요"])
+          ])
+        ]);
+      } else {
+        nextBtn = el("button",{class:"big-btn go", disabled:state.busy, onclick:function(){ state.confirmingCheckout=true; render(); }},[
+          el("span",{},["퇴근하기"]),
+          el("span",{class:"sub"},[state.tripMode ? "출장으로 기록돼요 (위치 확인 없음)" : checkHintText])
+        ]);
+      }
     } else {
       nextBtn = el("button",{class:"big-btn done", disabled:true},[
         el("span",{},["오늘 출퇴근 완료"]), el("span",{class:"sub"},["수고하셨어요"])
