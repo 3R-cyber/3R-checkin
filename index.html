@@ -140,8 +140,9 @@
     var h = Math.floor(total/60), m = total%60;
     return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
   };
-  var LS_ID = "3ri_att_my_emp_id";
   var LS_DEVICE = "3ri_att_device_id";
+  // employees must sign in with a Google account on this domain — anything else is rejected.
+  var ALLOWED_EMAIL_DOMAIN = "focuspang.com";
 
   var DEFAULT_CONFIG = {
     sites: {
@@ -155,7 +156,7 @@
     policyText:
 "■ 사업장 네트워크 기반 출퇴근관리 개인정보 수집·이용 동의서 (요약)\n\n" +
 "1. 수집 목적: 사업장 출퇴근 여부 확인 및 근태관리\n" +
-"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 네트워크(사무실 와이파이) 인식 여부, 기기 식별값(대리출근 등 이상 여부 확인 목적). 출퇴근 체크 시 GPS 등 개인 위치좌표는 수집하지 않습니다.\n" +
+"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 네트워크(사무실 와이파이) 인식 여부, 기기 식별값(대리출근 등 이상 여부 확인 목적), 로그인에 사용한 회사 구글 계정 이메일. 출퇴근 체크 시 GPS 등 개인 위치좌표는 수집하지 않습니다.\n" +
 "3. 보유·이용 기간: 재직 기간 중 활용하며, 퇴사일로부터 3년간 보관 후 파기합니다(근로기준법상 근로자 명부·임금대장 보존 의무 기준).\n" +
 "4. 처리 방식: 접속 정보는 출퇴근 인정 여부 판단 목적으로만 사용하며, 회사는 관련 법령을 준수하여 이를 처리합니다. 근무시간 외에는 별도로 수집하지 않습니다.\n" +
 "5. 제3자 제공: 법령에 근거가 없는 한 수집한 정보를 외부에 제공하지 않습니다.\n" +
@@ -163,39 +164,42 @@
 "위 내용을 확인하였으며 이에 동의합니다."
   };
 
+  // email is each employee's company Google account — required for them to sign in.
+  // Fill these in from the admin panel (직원 관리 → 수정) for anyone left blank here.
   var SEED_EMPLOYEES = [
-    {empId:"3R0001", name:"조광수", dept:"", site:"seoul"},
-    {empId:"3R0002", name:"박성현", dept:"닥터 사이먼팀 | PDSS", site:"daejeon"},
-    {empId:"3R0003", name:"오규찬", dept:"Focuspang 사업부", site:"seoul"},
-    {empId:"3R0004", name:"김미애", dept:"닥터 사이먼팀 | PDSS", site:"seoul"},
-    {empId:"3R0005", name:"임승우", dept:"Moment 사업부", site:"daejeon"},
-    {empId:"3R0006", name:"오지훈", dept:"Moment 사업부", site:"daejeon"},
-    {empId:"3R0007", name:"장지희", dept:"Moment 사업부", site:"daejeon"},
-    {empId:"3R0008", name:"정근영", dept:"Moment 사업부", site:"seoul"},
-    {empId:"3R0009", name:"Mahsa Aghazadeh", dept:"닥터 사이먼팀 | PDSS", site:"daejeon"},
-    {empId:"3R0010", name:"Mutalipov Firdavs", dept:"Focuspang 사업부", site:"seoul"},
-    {empId:"3R0011", name:"이효신", dept:"Platform Engineering팀", site:"seoul"},
-    {empId:"3R0012", name:"김예빈", dept:"콘텐츠 Marketing팀", site:"seoul"},
-    {empId:"3R0013", name:"Fathony Achmad", dept:"Platform Engineering팀", site:"seoul"},
-    {empId:"3R0014", name:"김민지", dept:"Focuspang 사업부", site:"seoul"},
-    {empId:"3R0015", name:"성지훈", dept:"Focuspang 사업부", site:"seoul"},
-    {empId:"3R0016", name:"이미숙", dept:"Moment 사업부", site:"seoul"},
-    {empId:"3R0017", name:"이수민", dept:"Focuspang 사업부", site:"seoul"},
-    {empId:"3R0018", name:"김세연", dept:"Moment 사업부", site:"seoul"},
-    {empId:"3R0019", name:"박지수", dept:"콘텐츠 Marketing팀", site:"seoul"},
-    {empId:"3R0020", name:"이대호", dept:"경영지원팀", site:"daejeon"},
-    {empId:"3R0021", name:"백장미", dept:"Focuspang 사업부", site:"seoul"},
-    {empId:"3R0022", name:"이경주", dept:"Focuspang 사업부", site:"seoul"},
-    {empId:"3R0023", name:"김민아", dept:"사업개발&Sales팀", site:"seoul"}
+    {empId:"3R0001", name:"조광수", dept:"", site:"seoul", email:""},
+    {empId:"3R0002", name:"박성현", dept:"닥터 사이먼팀 | PDSS", site:"daejeon", email:""},
+    {empId:"3R0003", name:"오규찬", dept:"Focuspang 사업부", site:"seoul", email:""},
+    {empId:"3R0004", name:"김미애", dept:"닥터 사이먼팀 | PDSS", site:"seoul", email:""},
+    {empId:"3R0005", name:"임승우", dept:"Moment 사업부", site:"daejeon", email:""},
+    {empId:"3R0006", name:"오지훈", dept:"Moment 사업부", site:"daejeon", email:""},
+    {empId:"3R0007", name:"장지희", dept:"Moment 사업부", site:"daejeon", email:""},
+    {empId:"3R0008", name:"정근영", dept:"Moment 사업부", site:"seoul", email:""},
+    {empId:"3R0009", name:"Mahsa Aghazadeh", dept:"닥터 사이먼팀 | PDSS", site:"daejeon", email:""},
+    {empId:"3R0010", name:"Mutalipov Firdavs", dept:"Focuspang 사업부", site:"seoul", email:""},
+    {empId:"3R0011", name:"이효신", dept:"Platform Engineering팀", site:"seoul", email:""},
+    {empId:"3R0012", name:"김예빈", dept:"콘텐츠 Marketing팀", site:"seoul", email:""},
+    {empId:"3R0013", name:"Fathony Achmad", dept:"Platform Engineering팀", site:"seoul", email:""},
+    {empId:"3R0014", name:"김민지", dept:"Focuspang 사업부", site:"seoul", email:""},
+    {empId:"3R0015", name:"성지훈", dept:"Focuspang 사업부", site:"seoul", email:""},
+    {empId:"3R0016", name:"이미숙", dept:"Moment 사업부", site:"seoul", email:""},
+    {empId:"3R0017", name:"이수민", dept:"Focuspang 사업부", site:"seoul", email:""},
+    {empId:"3R0018", name:"김세연", dept:"Moment 사업부", site:"seoul", email:""},
+    {empId:"3R0019", name:"박지수", dept:"콘텐츠 Marketing팀", site:"seoul", email:""},
+    {empId:"3R0020", name:"이대호", dept:"경영지원팀", site:"daejeon", email:"daeho_lee@focuspang.com"},
+    {empId:"3R0021", name:"백장미", dept:"Focuspang 사업부", site:"seoul", email:""},
+    {empId:"3R0022", name:"이경주", dept:"Focuspang 사업부", site:"seoul", email:""},
+    {empId:"3R0023", name:"김민아", dept:"사업개발&Sales팀", site:"seoul", email:""}
   ];
 
   /* ---------- state ---------- */
-  var db = null, auth = null, capsReady = false, configMissing = false;
+  var db = null, auth = null, capsReady = false, configMissing = false, employeesLoaded = false;
   var state = {
     tab: "me",                 // "me" | "admin"
-    employees: [],             // [{empId,name,dept,site}]
+    employees: [],             // [{empId,name,dept,site,email}]
     config: DEFAULT_CONFIG,
-    myId: localStorage.getItem(LS_ID) || "",
+    myId: "",                  // resolved from the signed-in Google account's email, not chosen freely
+    googleUnmatched: false,    // signed in with a valid company Google account, but no employee record has that email
     consent: undefined,        // undefined = unknown, null = none, obj = exists
     myMonthDoc: null,          // this month's record doc for me
     busy: false,
@@ -351,6 +355,72 @@
     return n;
   }
 
+  /* ---------- identity: real company Google login, not a free name-picker ---------- */
+  // an employee's identity now comes from a real, authenticated company Google
+  // account — matched to their employees/{empId} record by email — instead of
+  // freely picking any name from a dropdown. Admins keep signing in with
+  // email/password (checked via Firestore rules' isAdmin()), so we tell the two
+  // apart by auth provider rather than by "is this user anonymous".
+  function isGoogleUser(user){
+    return !!(user && user.providerData && user.providerData.some(function(p){ return p.providerId === "google.com"; }));
+  }
+  function isPasswordUser(user){
+    return !!(user && user.providerData && user.providerData.some(function(p){ return p.providerId === "password"; }));
+  }
+  function matchEmployeeByEmail(email){
+    if(!email) return null;
+    var norm = email.toLowerCase();
+    return state.employees.find(function(e){ return (e.email||"").toLowerCase() === norm; }) || null;
+  }
+
+  var domainRejectInFlight = false;
+  // re-evaluates who "me" is, given the current signed-in user and employee list.
+  // called after every auth change AND every employees-list refresh, since on a
+  // fresh page load these two can resolve in either order.
+  function syncGoogleIdentity(){
+    var user = state.authUser;
+    if(!isGoogleUser(user)){ state.googleUnmatched = false; return; }
+
+    var suffix = "@"+ALLOWED_EMAIL_DOMAIN;
+    var email = (user.email || "").toLowerCase();
+    var domainOk = email.length > suffix.length && email.slice(-suffix.length) === suffix;
+    if(!domainOk){
+      state.myId = ""; state.googleUnmatched = false;
+      if(!domainRejectInFlight){
+        domainRejectInFlight = true;
+        toast("회사 이메일 계정("+ALLOWED_EMAIL_DOMAIN+")으로 로그인해주세요.", 4200);
+        auth.signOut().then(function(){ return auth.signInAnonymously(); }).catch(function(){}).then(function(){ domainRejectInFlight = false; });
+      }
+      return;
+    }
+    if(!employeesLoaded) return; // don't judge "unmatched" until we've actually loaded the employee list
+
+    var matched = matchEmployeeByEmail(email);
+    if(matched){
+      state.googleUnmatched = false;
+      if(state.myId !== matched.empId){
+        state.myId = matched.empId;
+        state.consent = undefined; state.myMonthDoc = null;
+        watchMyConsent(); watchMyMonth();
+      }
+    } else {
+      state.myId = ""; state.googleUnmatched = true;
+    }
+  }
+
+  function signInWithGoogle(){
+    var provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ hd: ALLOWED_EMAIL_DOMAIN }); // hints Google's account picker to the work domain (UX only, not a security check)
+    auth.signInWithRedirect(provider).catch(function(){ toast("로그인을 시작하지 못했어요. 다시 시도해주세요."); });
+  }
+
+  function employeeSignOut(){
+    state.myId = ""; state.googleUnmatched = false;
+    state.consent = undefined; state.myMonthDoc = null;
+    auth.signOut().then(function(){ return auth.signInAnonymously(); }).catch(function(){});
+    render();
+  }
+
   /* ---------- firebase init ---------- */
   async function initFirebase(){
     if(String(firebaseConfig.apiKey||"").indexOf("PASTE_")===0){
@@ -364,17 +434,25 @@
       configMissing = true; capsReady = true; render(); return;
     }
 
+    // surfaces a clear error if signInWithRedirect couldn't complete (e.g. this
+    // site's domain isn't in Firebase's authorized-domains list yet) instead of
+    // failing silently.
+    auth.getRedirectResult().catch(function(e){
+      toast("구글 로그인에 실패했어요"+((e&&e.code)?" ("+e.code+")":"")+".", 4500);
+    });
+
     // waits for Firebase to report whatever session was already persisted (admin
-    // login or a prior anonymous session survives a refresh on its own) and only
-    // falls back to signing in anonymously when there's truly no session yet —
-    // calling signInAnonymously() unconditionally on every load, as before, would
-    // silently knock out a persisted admin session and replace it with a fresh
-    // anonymous one, logging the admin out on every refresh.
+    // login or a signed-in Google/anonymous session survives a refresh on its own)
+    // and only falls back to signing in anonymously when there's truly no session
+    // yet — calling signInAnonymously() unconditionally on every load, as before,
+    // would silently knock out a persisted session and replace it with a fresh
+    // anonymous one, logging everyone out on every refresh.
     await new Promise(function(resolve){
       var bootstrapped = false;
       auth.onAuthStateChanged(function(user){
         state.authUser = user;
-        state.isAdmin = !!(user && !user.isAnonymous);
+        state.isAdmin = isPasswordUser(user);
+        syncGoogleIdentity();
         render();
         if(!bootstrapped){
           bootstrapped = true;
@@ -403,6 +481,8 @@
     }catch(e){}
     db.collection("employees").onSnapshot(function(snap){
       state.employees = snap.docs.map(function(d){ return d.data(); }).sort(function(a,b){ return (a.name||"").localeCompare(b.name||"", "ko"); });
+      employeesLoaded = true;
+      syncGoogleIdentity();
       render();
     }, function(){});
   }
@@ -434,26 +514,14 @@
   }
 
   /* ---------- actions ---------- */
-  function chooseIdentity(empId){
-    state.myId = empId;
-    localStorage.setItem(LS_ID, empId);
-    state.consent = undefined; state.myMonthDoc = null;
-    watchMyConsent(); watchMyMonth();
-    render();
-  }
-  function switchIdentity(){
-    state.myId = ""; localStorage.removeItem(LS_ID);
-    state.consent = undefined; state.myMonthDoc = null;
-    render();
-  }
-
   async function giveConsent(){
     if(!db) return;
     var emp = myEmployee(); if(!emp) return;
     state.busy = true; render();
     try{
       await db.doc("consents/"+state.myId).set({
-        empId: state.myId, name: emp.name, agreedAt: new Date().toISOString(), policyVersion: state.config.policyVersion
+        empId: state.myId, name: emp.name, email: (state.authUser&&state.authUser.email)||"",
+        agreedAt: new Date().toISOString(), policyVersion: state.config.policyVersion
       });
     }catch(e){ toast("동의 저장에 실패했어요. 다시 시도해주세요."); }
     state.busy = false; render();
@@ -640,10 +708,10 @@
     var rows = [], errors = [];
     lines.forEach(function(line, idx){
       var parts = line.split(",").map(function(p){ return p.trim(); });
-      var empId = parts[0], name = parts[1], dept = parts[2] || "", siteRaw = (parts[3]||"").toLowerCase();
+      var empId = parts[0], name = parts[1], dept = parts[2] || "", siteRaw = (parts[3]||"").toLowerCase(), email = (parts[4]||"").toLowerCase();
       if(!empId || !name){ errors.push((idx+1)+"행: 사번/이름이 비어있어요 → \""+line+"\""); return; }
       var site = (siteRaw==="대전" || siteRaw==="daejeon") ? "daejeon" : "seoul";
-      rows.push({ empId:empId, name:name, dept:dept, site:site });
+      rows.push({ empId:empId, name:name, dept:dept, site:site, email:email });
     });
     return { rows:rows, errors:errors };
   }
@@ -802,12 +870,26 @@
       return;
     }
 
-    if(!state.myId){ root.appendChild(IdentityScreen()); return; }
+    if(state.googleUnmatched){
+      root.appendChild(el("div",{class:"card"},[
+        el("div",{class:"muted"},["("+((state.authUser&&state.authUser.email)||"")+") 이 이메일로 등록된 직원 정보가 없어요. 관리자에게 이메일 등록을 요청해주세요."]),
+        el("button",{class:"btn btn-ghost", onclick:employeeSignOut},["로그아웃"])
+      ]));
+      return;
+    }
+    if(!state.myId){
+      if(isGoogleUser(state.authUser)){
+        // signed in already — just waiting on the employee list to resolve who this is
+        root.appendChild(el("div",{class:"card"},[el("div",{class:"muted"},["확인 중…"])]));
+        return;
+      }
+      root.appendChild(IdentityScreen()); return;
+    }
     var emp = myEmployee();
     if(!emp){
       root.appendChild(el("div",{class:"card"},[
         el("div",{class:"muted"},["등록된 직원 정보를 찾을 수 없어요. 관리자에게 문의해주세요."]),
-        el("button",{class:"btn btn-ghost", onclick:switchIdentity},["다시 선택하기"])
+        el("button",{class:"btn btn-ghost", onclick:employeeSignOut},["로그아웃"])
       ]));
       return;
     }
@@ -833,14 +915,10 @@
   }
 
   function IdentityScreen(){
-    var options = [el("option",{value:""},["본인 이름을 선택하세요"])].concat(
-      state.employees.map(function(e){ return el("option",{value:e.empId},[e.name + " · " + (e.dept||"미지정")]); })
-    );
-    var sel = el("select",{onchange:function(ev){ if(ev.target.value) chooseIdentity(ev.target.value); }}, options);
     return el("div",{class:"card"},[
-      el("h2",{},["누구신가요?"]),
-      el("div",{class:"muted"},["처음 사용하신다면 본인의 사번을 선택해주세요. 이 기기에서는 다음부터 자동으로 기억돼요."]),
-      state.employees.length ? sel : el("div",{class:"muted"},["직원 목록을 불러오는 중이에요… (관리자가 초기 데이터를 아직 심지 않았다면 관리자 탭에서 심어주세요)"])
+      el("h2",{},["로그인"]),
+      el("div",{class:"muted"},["본인의 회사 구글 계정(@"+ALLOWED_EMAIL_DOMAIN+")으로 로그인하면 직원 정보가 자동으로 연결돼요. 이 기기에서는 다음부터 로그인이 계속 유지돼요."]),
+      el("button",{class:"btn btn-primary", onclick:signInWithGoogle},["Google 계정으로 로그인"])
     ]);
   }
 
@@ -855,7 +933,7 @@
       el("div",{class:"policy-box"},[state.config.policyText]),
       el("label",{class:"checkbox-row", for:checkboxId},[checkbox, el("span",{},["위 개인정보 수집·이용에 동의합니다."])]),
       btn,
-      el("button",{class:"link-btn", onclick:switchIdentity},["다른 직원으로 전환"])
+      el("button",{class:"link-btn", onclick:employeeSignOut},["로그아웃"])
     ]);
   }
 
@@ -936,7 +1014,7 @@
         nextBtn
       ]),
       el("div",{class:"card"},[el("h3",{style:"font-size:14px;"},["오늘 기록"]), timeline]),
-      el("button",{class:"link-btn", onclick:switchIdentity},["다른 직원으로 전환"])
+      el("button",{class:"link-btn", onclick:employeeSignOut},["로그아웃"])
     ]);
   }
 
@@ -1058,17 +1136,21 @@
 
   function AdminEmployeesCard(){
     var cfg = state.config;
-    var draft = state.empDraftId==="__new__" ? {empId:"",name:"",dept:"",site:"seoul"} :
+    var draft = state.empDraftId==="__new__" ? {empId:"",name:"",dept:"",site:"seoul",email:""} :
       (state.empDraftId ? state.employees.find(function(e){return e.empId===state.empDraftId;}) : null);
+
+    var noEmailCount = state.employees.filter(function(e){ return !e.email; }).length;
 
     var list = state.employees.map(function(e){
       var hoursBadge = (e.workStart || e.workEnd) ? el("span",{class:"badge-site", style:"background:var(--warn-soft);color:var(--warn);"},[(e.workStart||cfg.workStart)+"~"+(e.workEnd||cfg.workEnd)]) : null;
+      var emailBadge = !e.email ? el("span",{class:"badge-site", style:"background:var(--bad-soft);color:var(--bad);"},["이메일 미등록"]) : null;
       return el("div",{class:"row card-tight", style:"border:1px solid var(--border);border-radius:10px;"},[
         el("div",{class:"col",style:"gap:1px;"},[
           el("span",{style:"font-weight:700;font-size:13px;"},[e.name+" · "+e.empId]),
-          el("span",{class:"faint"},[e.dept||"미지정"])
+          el("span",{class:"faint"},[(e.dept||"미지정")+(e.email?(" · "+e.email):"")])
         ]),
         el("div",{class:"row",style:"gap:6px;flex:none;"},[
+          emailBadge,
           hoursBadge,
           el("span",{class:"badge-site"},[state.config.sites[e.site]?state.config.sites[e.site].label:e.site]),
           el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId=e.empId; state.empDraftOverrideOn = !!(e.workStart || e.workEnd); render(); }},["수정"])
@@ -1081,6 +1163,7 @@
       var idIn = el("input",{type:"text", value:draft.empId, placeholder:"사번 (예: 3R0024)", disabled: !!state.employees.find(function(e){return e.empId===draft.empId;})});
       var nameIn = el("input",{type:"text", value:draft.name, placeholder:"이름"});
       var deptIn = el("input",{type:"text", value:draft.dept, placeholder:"부서"});
+      var emailIn = el("input",{type:"email", value:draft.email||"", placeholder:"회사 구글 이메일 (예: hong@"+ALLOWED_EMAIL_DOMAIN+")"});
       var siteSel2 = el("select",{},[
         el("option",{value:"seoul", selected:draft.site==="seoul"},["서울"]),
         el("option",{value:"daejeon", selected:draft.site==="daejeon"},["대전"])
@@ -1096,6 +1179,7 @@
       formCard = el("div",{class:"card card-tight", style:"border:1px dashed var(--border);"},[
         el("div",{class:"grid2"},[idIn, nameIn]),
         el("div",{class:"grid2"},[deptIn, siteSel2]),
+        el("label",{class:"field"},["회사 구글 이메일 (로그인 계정)", emailIn]),
         el("label",{class:"checkbox-row"},[overrideCb, el("span",{},["이 직원은 근무시간이 달라요 (기본 "+cfg.workStart+"~"+cfg.workEnd+")"])]),
         overrideRow,
         el("div",{class:"row"},[
@@ -1106,7 +1190,7 @@
             el("button",{class:"btn btn-primary btn-sm", onclick:function(){
               var empId = idIn.value.trim();
               if(!empId || !nameIn.value.trim()){ toast("사번과 이름을 입력해주세요."); return; }
-              var empObj = { empId:empId, name:nameIn.value.trim(), dept:deptIn.value.trim(), site:siteSel2.value };
+              var empObj = { empId:empId, name:nameIn.value.trim(), dept:deptIn.value.trim(), site:siteSel2.value, email:emailIn.value.trim().toLowerCase() };
               if(state.empDraftOverrideOn){
                 empObj.workStart = overrideStartIn.value;
                 empObj.workEnd = overrideEndIn.value;
@@ -1120,9 +1204,9 @@
 
     var bulkCard = null;
     if(state.bulkAddOpen){
-      var bulkTa = el("textarea",{placeholder:"한 줄에 한 명씩, 쉼표로 구분해서 붙여넣으세요.\n예)\n3R0024,홍길동,개발팀,서울\n3R0025,김철수,영업팀,대전", style:"min-height:120px;"});
+      var bulkTa = el("textarea",{placeholder:"한 줄에 한 명씩, 쉼표로 구분해서 붙여넣으세요.\n예)\n3R0024,홍길동,개발팀,서울,hong@"+ALLOWED_EMAIL_DOMAIN+"\n3R0025,김철수,영업팀,대전,kim@"+ALLOWED_EMAIL_DOMAIN, style:"min-height:120px;"});
       bulkCard = el("div",{class:"card card-tight", style:"border:1px dashed var(--border);"},[
-        el("div",{class:"muted"},["형식: 사번,이름,부서,지점(서울 또는 대전) — 한 줄에 한 명씩. 부서·지점은 비워두면 각각 미지정/서울로 들어가요."]),
+        el("div",{class:"muted"},["형식: 사번,이름,부서,지점(서울 또는 대전),이메일(회사 구글 계정) — 한 줄에 한 명씩. 부서·지점은 비워두면 각각 미지정/서울로 들어가고, 이메일을 넣어야 구글 로그인으로 연결돼요."]),
         bulkTa,
         el("div",{class:"row"},[
           el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.bulkAddOpen=false; render(); }},["취소"]),
@@ -1141,6 +1225,7 @@
           el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId="__new__"; state.empDraftOverrideOn=false; state.bulkAddOpen=false; render(); }},["+ 직원 추가"])
         ])
       ]),
+      noEmailCount ? el("div",{class:"muted", style:"font-size:12px;color:var(--bad);"},["⚠ "+noEmailCount+"명이 아직 이메일 미등록 상태예요 — 등록 전까지는 구글 로그인으로 매칭이 안 돼요."]) : null,
       bulkCard,
       formCard,
       el("div",{class:"col"}, list)
