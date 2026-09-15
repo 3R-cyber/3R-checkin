@@ -660,6 +660,32 @@
     }catch(e){ toast("초기화에 실패했어요: " + ((e && e.message) || "관리자 계정으로 로그인했는지 확인해주세요.")); }
   }
 
+  // deletes every consent + check-in record (testing artifacts), so every employee
+  // sees the consent screen again and starts with a clean attendance history.
+  // Leaves the employee list and site/settings config untouched.
+  async function adminResetAllData(){
+    if(!confirm("정말 초기화할까요?\n\n모든 직원의 개인정보 동의 기록과 출퇴근 기록이 전부 삭제돼요.\n직원 목록·사이트(와이파이)·근무시간 설정은 그대로 남아요.\n되돌릴 수 없어요.")) return;
+    try{
+      var consentSnap = await db.collection("consents").get();
+      var checkinSnap = await db.collection("checkins").get();
+      var refs = consentSnap.docs.map(function(d){ return d.ref; })
+        .concat(checkinSnap.docs.map(function(d){ return d.ref; }));
+      if(!refs.length){ toast("지울 동의·출퇴근 기록이 없어요."); return; }
+      var chunkSize = 400; // Firestore batches cap at 500 writes
+      for(var i=0; i<refs.length; i+=chunkSize){
+        var batch = db.batch();
+        refs.slice(i, i+chunkSize).forEach(function(ref){ batch.delete(ref); });
+        await batch.commit();
+      }
+      state.adminRows = [];
+      state.adminSelected = {};
+      state.myMonthDoc = null;
+      state.consent = state.myId ? null : undefined;
+      toast(refs.length+"건의 동의·출퇴근 기록을 초기화했어요.");
+      render();
+    }catch(e){ toast("초기화에 실패했어요. 관리자 권한이 있는 계정인지 확인해주세요."); }
+  }
+
   // builds one report-style sheet: a merged title row, a merged subtitle row,
   // a blank spacer row, then a header row followed by the data — readable
   // straight out of Excel without any manual resizing.
@@ -921,7 +947,8 @@
       AdminRecordsCard(),
       AdminEmployeesCard(),
       AdminSettingsCard(),
-      AdminSeedCard()
+      AdminSeedCard(),
+      AdminDangerCard()
     ]);
   }
 
@@ -1148,6 +1175,14 @@
       el("h3",{style:"font-size:15px;"},["초기 데이터 세팅"]),
       el("div",{class:"muted"},["최초 1회만 눌러주세요. 이미 직원 데이터가 있으면 아무 것도 바뀌지 않아요."]),
       el("button",{class:"btn btn-ghost", onclick:seedInitialData},["기본 직원·설정 데이터 심기"])
+    ]);
+  }
+
+  function AdminDangerCard(){
+    return el("div",{class:"card", style:"border:1px solid var(--bad);"},[
+      el("h3",{style:"font-size:15px;color:var(--bad);"},["테스트 데이터 초기화"]),
+      el("div",{class:"muted"},["관리자님 컴퓨터로 여러 사번을 테스트해봤다면, 그때 생긴 개인정보 동의·출퇴근 기록을 여기서 한 번에 지울 수 있어요. 직원 목록, 와이파이·근무시간 설정은 그대로 남고, 모든 사번의 동의 기록과 출퇴근 기록만 삭제돼요 (되돌릴 수 없어요)."]),
+      el("button",{class:"btn btn-danger", onclick:adminResetAllData},["동의·출퇴근 기록 전체 초기화"])
     ]);
   }
 
