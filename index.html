@@ -158,11 +158,11 @@
     radiusM: 100,
     workStart: "10:00",
     workEnd: "18:30",
-    policyVersion: "2026-09-15-2",
+    policyVersion: "2026-09-15-3",
     policyText:
 "■ 사업장 네트워크 기반 출퇴근관리 개인정보 수집·이용 동의서 (요약)\n\n" +
 "1. 수집 목적: 사업장 출퇴근 여부 확인 및 근태관리\n" +
-"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 네트워크(사무실 와이파이) 인식 여부, 기기 정보, 로그인에 사용한 회사 구글 계정 이메일. 출퇴근 체크 시 GPS 등 개인 위치좌표는 수집하지 않습니다.\n" +
+"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 네트워크(사무실 와이파이) 인식 여부, 기기 정보, 로그인에 사용한 회사 구글 계정 이메일, 지각 사유(본인이 선택적으로 입력한 경우). 출퇴근 체크 시 GPS 등 개인 위치좌표는 수집하지 않습니다.\n" +
 "3. 보유·이용 기간: 재직 기간 중 활용하며, 퇴사일로부터 3년간 보관 후 파기합니다(근로기준법상 근로자 명부·임금대장 보존 의무 기준).\n" +
 "4. 처리 방식: 접속 정보는 출퇴근 인정 여부 판단 목적으로만 사용하며, 회사는 관련 법령을 준수하여 이를 처리합니다. 근무시간 외에는 별도로 수집하지 않습니다.\n" +
 "5. 제3자 제공: 법령에 근거가 없는 한 수집한 정보를 외부에 제공하지 않습니다.\n" +
@@ -220,7 +220,11 @@
     bulkAddOpen: false,
     bulkEmailOpen: false,
     adminSelected: {},
-    confirmingCheckout: false  // "퇴근하기"는 실수로 누르면 되돌리기 번거로우니 한 번 더 확인받는다
+    confirmingCheckout: false, // "퇴근하기"는 실수로 누르면 되돌리기 번거로우니 한 번 더 확인받는다
+    confirmingReset: false,    // "전체 초기화"는 되돌릴 수 없는 파괴적 동작이라 한 번 더 확인받는다
+    resetConfirmText: "",      // 전체 초기화 확인 문구 입력값
+    confirmDeleteKey: null,    // 개별 기록 삭제도 한 번 더 확인받는다 (rowKey 값)
+    lateReasonDraft: ""        // 지각 사유 입력창의 임시값 — 30초 주기 재렌더에도 안 날아가게 state에 보관
   };
 
   function haversine(lat1,lng1,lat2,lng2){
@@ -293,6 +297,22 @@
       }
     });
     return suspects;
+  }
+
+  // counts "지각" check-ins per employee within the given (already month/site
+  // filtered) rows, so it always matches whatever the admin is currently looking
+  // at rather than always the whole month regardless of the site filter.
+  function computeChronicLate(rows, threshold){
+    threshold = threshold || 3;
+    var counts = {};
+    rows.forEach(function(r){
+      if(r.type !== "in" || r.status !== "지각") return;
+      counts[r.empId] = counts[r.empId] || { empId:r.empId, name:r.name, count:0 };
+      counts[r.empId].count++;
+    });
+    return Object.keys(counts).map(function(k){ return counts[k]; })
+      .filter(function(c){ return c.count >= threshold; })
+      .sort(function(a,b){ return b.count - a.count; });
   }
 
   // asks a public IP-echo service what public IP this browser is exiting through.
@@ -560,7 +580,7 @@
     });
   }
 
-  async function doCheck(type){
+  async function doCheck(type, lateReason){
     var emp = myEmployee(); if(!emp || state.busy) return;
     state.busy = true; render();
     try{
@@ -587,6 +607,11 @@
         method: "wifi", status: computeStatus(type, timeStr, hours.start, hours.end),
         device: getDeviceId(), ip: publicIp || null
       };
+      // 지각 사유는 거짓말을 막는 장치가 아니라, 관리자가 나중에 참고할 수 있는
+      // 선택적 메모일 뿐이라 실제로 "지각"으로 판정된 경우에만 붙인다.
+      if(type === "in" && rec.status === "지각" && lateReason && lateReason.trim()){
+        rec.reason = lateReason.trim();
+      }
       var docId = state.myId + "_" + MONTH_KEY(now);
       var ref = db.doc("checkins/"+docId);
       var snap = await ref.get();
@@ -595,6 +620,7 @@
       var body = { empId: state.myId, name: emp.name, dept: emp.dept||"", site: emp.site, month: MONTH_KEY(now), records: records };
       if(snap.exists) await ref.update(body); else await ref.set(body);
       toast((type==="in" ? "출근" : "퇴근") + " 체크 완료 · " + timeStr + " · " + rec.status);
+      state.lateReasonDraft = "";
     }catch(err){
       toast("체크에 실패했어요. 인터넷 연결을 확인하고 다시 시도해주세요.", 3600);
     }
@@ -622,7 +648,7 @@
 
   async function loadAdminMonth(){
     if(!db || state.employees.length===0){ state.adminRows=[]; return; }
-    state.adminLoading = true; state.adminSelected = {}; render();
+    state.adminLoading = true; state.adminSelected = {}; state.confirmDeleteKey = null; render();
     var month = state.adminMonth;
     try{
       var snaps = await Promise.all(state.employees.map(function(e){
@@ -888,8 +914,9 @@
   // deletes every consent + check-in record (testing artifacts), so every employee
   // sees the consent screen again and starts with a clean attendance history.
   // Leaves the employee list and site/settings config untouched.
+  // 호출 전에 AdminDangerCard의 문구 입력 확인을 이미 거친 상태라고 가정한다
+  // (여기서 다시 confirm()을 띄우면 우리 카드 UI랑 브라우저 기본 팝업이 중복된다).
   async function adminResetAllData(){
-    if(!confirm("정말 초기화할까요?\n\n모든 직원의 개인정보 동의 기록과 출퇴근 기록이 전부 삭제돼요.\n직원 목록·사이트(와이파이)·근무시간 설정은 그대로 남아요.\n되돌릴 수 없어요.")) return;
     try{
       var consentSnap = await db.collection("consents").get();
       var checkinSnap = await db.collection("checkins").get();
@@ -949,6 +976,7 @@
         "구분": r.type==="in" ? "출근" : "퇴근", "시각": r.time, "상태": r.status,
         "확인방식": r.method==="wifi" ? "와이파이" : (r.method==="gps" ? "GPS" : (r.distanceM!=null ? "GPS" : "")),
         "이메일": emailByEmpId[r.empId] || "",
+        "지각사유": r.reason || "",
         "수정자": r.editedBy||"", "수정시각": r.editedAt||""
       };
     }).sort(function(a,b){
@@ -958,8 +986,8 @@
       var order = {"출근":0, "퇴근":1};
       return (order[a["구분"]]||0) - (order[b["구분"]]||0);
     });
-    var detailHeaders = ["날짜","사번","이름","부서","지점","구분","시각","상태","확인방식","이메일","수정자","수정시각"];
-    var detailWidths  = [11, 9, 9, 16, 10, 7, 7, 7, 10, 24, 10, 17];
+    var detailHeaders = ["날짜","사번","이름","부서","지점","구분","시각","상태","확인방식","이메일","지각사유","수정자","수정시각"];
+    var detailWidths  = [11, 9, 9, 16, 10, 7, 7, 7, 10, 24, 22, 10, 17];
 
     // ---- 요약: per-employee monthly totals, ready to hand over as a report ----
     var byEmp = {};
@@ -1090,6 +1118,13 @@
     return el("span",{class:"pill "+cls},[status]);
   }
 
+  function StatBlock(value, label){
+    return el("div",{class:"col", style:"align-items:center;gap:2px;flex:1;"},[
+      el("span",{class:"num", style:"font-weight:800;font-size:18px;font-family:var(--font-head);"},[value]),
+      el("span",{class:"faint", style:"font-size:12px;"},[label])
+    ]);
+  }
+
   function MeScreen(emp){
     var site = state.config.sites[emp.site] || {label: emp.site};
     var hours = effectiveHours(emp);
@@ -1103,6 +1138,19 @@
     var hasIn = todays.some(function(r){ return r.type==="in"; });
     var hasOut = todays.some(function(r){ return r.type==="out"; });
 
+    // 이번 달 본인 현황 — 관리자한테 안 물어봐도 본인이 바로 확인할 수 있게.
+    var monthRecords = (state.myMonthDoc && state.myMonthDoc.records) || [];
+    var myInDates = {};
+    var myLateCount = 0, myEarlyCount = 0;
+    monthRecords.forEach(function(r){
+      if(r.type === "in"){
+        myInDates[r.date] = true;
+        if(r.status === "지각") myLateCount++;
+      }
+      if(r.type === "out" && r.status === "조퇴") myEarlyCount++;
+    });
+    var myInDayCount = Object.keys(myInDates).length;
+
     var reminderTime = shiftHHMM(hours.start, -15);
     var showReminder = !hasIn && HHMM() >= reminderTime;
     var reminderBanner = !showReminder ? null : el("div",{class:"card", style:"background:var(--warn-soft);border:1px solid var(--warn);"},[
@@ -1112,10 +1160,24 @@
 
     var nextBtn;
     if(!hasIn){
-      nextBtn = el("button",{class:"big-btn checkin", disabled:state.busy, onclick:function(){ doCheck("in"); }},[
+      // 이미 근무 시작 시각을 지났으면 체크했을 때 "지각"으로 기록될 거라, 눌러보기
+      // 전에 미리 사유를 남길 수 있는 선택 입력창을 보여준다. 거짓말을 막을 수는
+      // 없지만(사유 검증 불가), 검증 목적이 아니라 관리자가 나중에 참고할 기록용.
+      var willBeLate = HHMM() > hours.start;
+      var checkinBtn = el("button",{class:"big-btn checkin", disabled:state.busy, onclick:function(){
+        doCheck("in", state.lateReasonDraft);
+      }},[
         el("span",{},[state.busy?"확인 중…":"출근하기"]),
         el("span",{class:"sub"},[checkHintText])
       ]);
+      if(willBeLate){
+        var reasonInput = el("input",{type:"text", value:state.lateReasonDraft,
+          placeholder:"지각 사유 (선택, 안 남겨도 돼요)",
+          oninput:function(ev){ state.lateReasonDraft = ev.target.value; }});
+        nextBtn = el("div",{class:"col", style:"gap:8px;"},[reasonInput, checkinBtn]);
+      } else {
+        nextBtn = checkinBtn;
+      }
     } else if(!hasOut){
       if(state.confirmingCheckout){
         // one extra tap before the check-out actually commits — a mis-tap on
@@ -1152,7 +1214,8 @@
       return el("div",{class:"row card-tight", style:"border:1px solid var(--border);border-radius:10px;"},[
         el("div",{class:"col", style:"gap:2px;"},[
           el("span",{style:"font-weight:700;font-size:13px;"},[r.type==="in"?"출근":"퇴근"]),
-          el("span",{class:"faint num"},[parts.join(" · ")])
+          el("span",{class:"faint num"},[parts.join(" · ")]),
+          r.reason ? el("span",{class:"faint", style:"font-size:12px;"},["사유: "+r.reason]) : null
         ]),
         StatusPill(r.status)
       ]);
@@ -1170,6 +1233,11 @@
           el("span",{class:"badge-site"},[site.label])
         ]),
         nextBtn
+      ]),
+      el("div",{class:"card card-tight", style:"flex-direction:row;"},[
+        StatBlock(myInDayCount+"일", "이번 달 출근"),
+        StatBlock(myLateCount+"회", "지각"),
+        StatBlock(myEarlyCount+"회", "조퇴")
       ]),
       el("div",{class:"card"},[el("h3",{style:"font-size:14px;"},["오늘 기록"]), timeline]),
       el("button",{class:"link-btn", onclick:employeeSignOut},["로그아웃"])
@@ -1231,6 +1299,7 @@
     ]);
     var rows = state.adminRows.filter(function(r){ return state.adminSiteFilter==="all" || r.site===state.adminSiteFilter; });
     var suspects = computeSuspectDevices();
+    var chronicLate = computeChronicLate(rows, 3);
     var selectedCount = rows.filter(function(r){ return state.adminSelected[rowKey(r)]; }).length;
     var allSelected = rows.length>0 && selectedCount===rows.length;
 
@@ -1248,12 +1317,20 @@
       var statusSel = el("select",{style:"width:78px;padding:5px 6px;font-size:12px;",
         onchange:function(ev){ adminUpdateRecord(r, { status: ev.target.value }); }},
         ["정상","지각","조퇴"].map(function(s){ return el("option",{value:s, selected:r.status===s},[s]); }));
+      var reasonMark = r.reason ? el("span",{title:"지각 사유: "+r.reason, style:"margin-left:4px;cursor:help;"},["💬"]) : null;
       var cb = el("input",{type:"checkbox", checked:!!state.adminSelected[key],
         onchange:function(ev){ state.adminSelected[key] = ev.target.checked; render(); }});
       var isSuspect = !!(r.device && suspects[r.device]);
       var deviceCell = r.device
         ? el("span",{title:r.device, style:isSuspect ? "color:var(--bad);font-weight:700;" : "color:var(--ink-faint);"},[(isSuspect?"⚠ ":"")+r.device])
         : el("span",{class:"faint"},["-"]);
+      // 개별 삭제도 한 번 더 확인 — 첫 클릭에 바로 지워지지 않고 "정말 삭제"로 바뀐다.
+      var deleteCell = state.confirmDeleteKey === key
+        ? el("div",{class:"row", style:"gap:4px;flex-wrap:nowrap;"},[
+            el("button",{class:"btn btn-sm btn-bad", onclick:function(){ state.confirmDeleteKey=null; adminDeleteRecord(r); }},["정말 삭제"]),
+            el("button",{class:"btn btn-sm btn-ghost", onclick:function(){ state.confirmDeleteKey=null; render(); }},["취소"])
+          ])
+        : el("button",{class:"btn btn-sm btn-danger", onclick:function(){ state.confirmDeleteKey=key; render(); }},["삭제"]);
       return el("tr",{},[
         el("td",{},[cb]),
         el("td",{},[r.date]),
@@ -1261,12 +1338,19 @@
         el("td",{},[el("span",{class:"badge-site"},[state.config.sites[r.site]?state.config.sites[r.site].label:r.site])]),
         el("td",{},[r.type==="in"?"출근":"퇴근"]),
         el("td",{},[timeInput]),
-        el("td",{},[statusSel]),
+        el("td",{},[statusSel, reasonMark]),
         el("td",{class:"num"},[r.method==="wifi" ? "와이파이" : (r.distanceM==null ? "-" : String(r.distanceM)+"m")]),
         el("td",{class:"num"},[deviceCell]),
-        el("td",{},[el("button",{class:"btn btn-sm btn-danger", onclick:function(){ adminDeleteRecord(r); }},["삭제"])])
+        el("td",{},[deleteCell])
       ]);
     });
+
+    var chronicLateBanner = chronicLate.length ? el("div",{class:"card card-tight", style:"background:var(--warn-soft);border:1px solid var(--warn);"},[
+      el("div",{style:"font-weight:700;color:var(--warn);font-size:13px;"},["⚠ 이번 조회 기준 지각 3회 이상"]),
+      el("div",{class:"row", style:"flex-wrap:wrap;gap:6px;"}, chronicLate.map(function(c){
+        return el("span",{class:"badge-site", style:"background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn);"},[c.name+" "+c.count+"회"]);
+      }))
+    ]) : null;
 
     return el("div",{class:"card"},[
       el("div",{class:"row", style:"flex-wrap:wrap;"},[
@@ -1276,6 +1360,7 @@
           el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ loadAdminMonth(); }},["새로고침"])
         ])
       ]),
+      chronicLateBanner,
       state.adminLoading ? el("div",{class:"muted"},["불러오는 중…"]) :
         rows.length===0 ? el("div",{class:"muted"},["이 달 기록이 없어요."]) :
         el("div",{class:"tablewrap"},[el("table",{},[
@@ -1463,10 +1548,33 @@
   }
 
   function AdminDangerCard(){
+    var CONFIRM_WORD = "초기화";
+    if(state.confirmingReset){
+      // typed-confirmation instead of a plain 취소/확인 pair — this wipes every
+      // employee's data at once, so a single reflex click shouldn't be enough.
+      var confirmIn = el("input",{type:"text", value:state.resetConfirmText, placeholder:CONFIRM_WORD,
+        oninput:function(ev){ state.resetConfirmText = ev.target.value; }});
+      return el("div",{class:"card", style:"border:1px solid var(--bad);"},[
+        el("h3",{style:"font-size:15px;color:var(--bad);"},["정말로 전체 초기화할까요?"]),
+        el("div",{class:"muted"},["모든 직원의 개인정보 동의 기록과 출퇴근 기록이 전부 삭제돼요. 직원 목록·와이파이·근무시간 설정은 그대로 남아요. 되돌릴 수 없어요."]),
+        el("label",{class:"field"},["확인을 위해 \""+CONFIRM_WORD+"\"라고 입력해주세요", confirmIn]),
+        el("div",{class:"row"},[
+          el("button",{class:"btn btn-ghost", onclick:function(){ state.confirmingReset=false; state.resetConfirmText=""; render(); }},["취소"]),
+          el("button",{class:"btn btn-bad", onclick:function(){
+            if((state.resetConfirmText||"").trim() !== CONFIRM_WORD){
+              toast("\""+CONFIRM_WORD+"\"라고 정확히 입력해야 실행돼요.", 3200);
+              return;
+            }
+            state.confirmingReset = false; state.resetConfirmText = "";
+            adminResetAllData();
+          }},["초기화 실행"])
+        ])
+      ]);
+    }
     return el("div",{class:"card", style:"border:1px solid var(--bad);"},[
       el("h3",{style:"font-size:15px;color:var(--bad);"},["테스트 데이터 초기화"]),
       el("div",{class:"muted"},["관리자님 컴퓨터로 여러 사번을 테스트해봤다면, 그때 생긴 개인정보 동의·출퇴근 기록을 여기서 한 번에 지울 수 있어요. 직원 목록, 와이파이·근무시간 설정은 그대로 남고, 모든 사번의 동의 기록과 출퇴근 기록만 삭제돼요 (되돌릴 수 없어요)."]),
-      el("button",{class:"btn btn-danger", onclick:adminResetAllData},["동의·출퇴근 기록 전체 초기화"])
+      el("button",{class:"btn btn-danger", onclick:function(){ state.confirmingReset=true; state.resetConfirmText=""; render(); }},["동의·출퇴근 기록 전체 초기화"])
     ]);
   }
 
