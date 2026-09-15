@@ -141,6 +141,7 @@
     return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
   };
   var LS_ID = "3ri_att_my_emp_id";
+  var LS_DEVICE = "3ri_att_device_id";
 
   var DEFAULT_CONFIG = {
     sites: {
@@ -150,11 +151,11 @@
     radiusM: 100,
     workStart: "10:00",
     workEnd: "18:30",
-    policyVersion: "2026-09-11",
+    policyVersion: "2026-09-15",
     policyText:
 "■ 사업장 네트워크 기반 출퇴근관리 개인정보 수집·이용 동의서 (요약)\n\n" +
 "1. 수집 목적: 사업장 출퇴근 여부 확인 및 근태관리\n" +
-"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 네트워크(사무실 와이파이) 인식 여부. 출퇴근 체크 시 GPS 등 개인 위치좌표는 수집하지 않습니다.\n" +
+"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 네트워크(사무실 와이파이) 인식 여부, 기기 식별값(대리출근 등 이상 여부 확인 목적). 출퇴근 체크 시 GPS 등 개인 위치좌표는 수집하지 않습니다.\n" +
 "3. 보유·이용 기간: 재직 기간 중 활용하며, 퇴사일로부터 3년간 보관 후 파기합니다(근로기준법상 근로자 명부·임금대장 보존 의무 기준).\n" +
 "4. 처리 방식: 접속 정보는 출퇴근 인정 여부 판단 목적으로만 사용하며, 회사는 관련 법령을 준수하여 이를 처리합니다. 근무시간 외에는 별도로 수집하지 않습니다.\n" +
 "5. 제3자 제공: 법령에 근거가 없는 한 수집한 정보를 외부에 제공하지 않습니다.\n" +
@@ -205,6 +206,7 @@
     adminRows: [],             // flattened rows for current admin month
     adminLoading: false,
     empDraftId: null,
+    empDraftOverrideOn: false,
     bulkAddOpen: false,
     adminSelected: {},
     tripMode: false
@@ -226,10 +228,60 @@
     }).sort(function(a,b){ return a.dist - b.dist; });
   }
 
-  function computeStatus(type, timeStr){
+  // workStart/workEnd are optional — pass an employee's own exception hours,
+  // or omit to fall back to the site-wide default in state.config.
+  function computeStatus(type, timeStr, workStart, workEnd){
+    workStart = workStart || state.config.workStart;
+    workEnd = workEnd || state.config.workEnd;
     return type === "in"
-      ? (timeStr > state.config.workStart ? "지각" : "정상")
-      : (timeStr < state.config.workEnd ? "조퇴" : "정상");
+      ? (timeStr > workStart ? "지각" : "정상")
+      : (timeStr < workEnd ? "조퇴" : "정상");
+  }
+
+  // an employee's effective work hours: their own exception if set, else the site-wide default.
+  function effectiveHours(emp){
+    return {
+      start: (emp && emp.workStart) || state.config.workStart,
+      end: (emp && emp.workEnd) || state.config.workEnd
+    };
+  }
+
+  // a random ID persisted in this browser's localStorage, so every check-in from
+  // the same browser/device carries the same tag over time. Not a security lock —
+  // it resets if the person clears site data, uses a private window, or switches
+  // devices/browsers — but it's a useful audit trail: if two different 사번 show
+  // the same device ID, that's worth an admin taking a look at (see computeSuspectDevices).
+  function getDeviceId(){
+    try{
+      var id = localStorage.getItem(LS_DEVICE);
+      if(!id){
+        id = (typeof crypto !== "undefined" && crypto.randomUUID)
+          ? crypto.randomUUID().replace(/-/g,"").slice(0,8).toUpperCase()
+          : Math.random().toString(36).slice(2,10).toUpperCase();
+        localStorage.setItem(LS_DEVICE, id);
+      }
+      return id;
+    }catch(e){ return null; }
+  }
+
+  // groups the currently-loaded admin rows by device ID and flags any device ID
+  // that's been used to check in under 2+ different 사번 — a signal (not proof)
+  // of possible 대리출근. Shared office PCs can trigger this legitimately.
+  function computeSuspectDevices(){
+    var byDevice = {};
+    state.adminRows.forEach(function(r){
+      if(!r.device) return;
+      byDevice[r.device] = byDevice[r.device] || {};
+      byDevice[r.device][r.empId] = r.name;
+    });
+    var suspects = {};
+    Object.keys(byDevice).forEach(function(dev){
+      var empIds = Object.keys(byDevice[dev]);
+      if(empIds.length >= 2){
+        suspects[dev] = empIds.map(function(id){ return { empId:id, name:byDevice[dev][id] }; });
+      }
+    });
+    return suspects;
   }
 
   // asks a public IP-echo service what public IP this browser is exiting through.
@@ -416,7 +468,8 @@
       if(isTrip){
         rec = {
           date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
-          lat: null, lng: null, accuracy: null, distanceM: null, status: "출장"
+          lat: null, lng: null, accuracy: null, distanceM: null, status: "출장",
+          device: getDeviceId()
         };
       } else {
         var anyIpConfigured = Object.keys(state.config.sites).some(function(k){
@@ -432,10 +485,12 @@
           toast("사업장 와이파이에 연결된 상태에서만 체크할 수 있어요. 와이파이 연결을 확인하고 다시 시도해주세요. 외근·출장인 경우 '출장' 체크를 이용해주세요.", 4600);
           state.busy = false; render(); return;
         }
+        var hours = effectiveHours(emp);
         rec = {
           date: TODAY_KEY(now), type: type, ts: now.toISOString(), time: timeStr,
           lat: null, lng: null, accuracy: null, distanceM: null, site: ipMatch.key,
-          method: "wifi", status: computeStatus(type, timeStr)
+          method: "wifi", status: computeStatus(type, timeStr, hours.start, hours.end),
+          device: getDeviceId(), ip: publicIp || null
         };
       }
       var docId = state.myId + "_" + MONTH_KEY(now);
@@ -605,24 +660,78 @@
     }catch(e){ toast("초기화에 실패했어요: " + ((e && e.message) || "관리자 계정으로 로그인했는지 확인해주세요.")); }
   }
 
+  // builds one report-style sheet: a merged title row, a merged subtitle row,
+  // a blank spacer row, then a header row followed by the data — readable
+  // straight out of Excel without any manual resizing.
+  function sheetWithTitle(title, subtitle, headers, dataRows, colWidths){
+    var aoa = [[title], [subtitle], []];
+    aoa.push(headers);
+    dataRows.forEach(function(row){ aoa.push(headers.map(function(h){ return row[h]; })); });
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = colWidths.map(function(w){ return {wch:w}; });
+    ws["!merges"] = [
+      {s:{r:0,c:0}, e:{r:0,c:headers.length-1}},
+      {s:{r:1,c:0}, e:{r:1,c:headers.length-1}}
+    ];
+    return ws;
+  }
+
   function exportExcel(){
     if(typeof XLSX === "undefined"){ toast("표 생성 라이브러리를 불러오는 중이에요. 잠시 후 다시 시도해주세요."); return; }
     var rows = state.adminRows.filter(function(r){ return state.adminSiteFilter==="all" || r.site===state.adminSiteFilter; });
-    var data = rows.map(function(r){
+    if(rows.length===0){ toast("내보낼 기록이 없어요."); return; }
+
+    var siteLabel = state.adminSiteFilter==="all" ? "전체" : (state.config.sites[state.adminSiteFilter] ? state.config.sites[state.adminSiteFilter].label : state.adminSiteFilter);
+    var now = new Date();
+    var subtitleLine = "대상 월: "+state.adminMonth+" · 지점: "+siteLabel+" · 생성: "+TODAY_KEY(now)+" "+HHMM(now);
+
+    // ---- 상세기록: every check-in/out, oldest first so it reads top-to-bottom like a log ----
+    var detail = rows.map(function(r){
       return {
         "날짜": r.date, "사번": r.empId, "이름": r.name, "부서": r.dept||"",
-        "지점": state.config.sites[r.site] ? state.config.sites[r.site].label : r.site,
+        "지점": state.config.sites[r.site] ? state.config.sites[r.site].label : (r.site||""),
         "구분": r.type==="in" ? "출근" : "퇴근", "시각": r.time, "상태": r.status,
-        "거리(m)": r.method==="wifi" ? "와이파이" : (r.distanceM==null ? "-" : r.distanceM), "위도": r.lat==null ? "" : r.lat, "경도": r.lng==null ? "" : r.lng,
-        "확인방식": r.method==="wifi" ? "와이파이" : (r.method==="gps" ? "GPS" : (r.status==="출장" ? "출장(자가신고)" : "")),
+        "확인방식": r.method==="wifi" ? "와이파이" : (r.method==="gps" ? "GPS" : (r.status==="출장" ? "출장(자가신고)" : (r.distanceM!=null ? "GPS" : ""))),
+        "기기ID": r.device || "", "IP": r.ip || "",
         "수정자": r.editedBy||"", "수정시각": r.editedAt||""
       };
+    }).sort(function(a,b){
+      if(a["날짜"] !== b["날짜"]) return a["날짜"] < b["날짜"] ? -1 : 1;
+      var byName = String(a["이름"]||"").localeCompare(String(b["이름"]||""), "ko");
+      if(byName !== 0) return byName;
+      var order = {"출근":0, "퇴근":1};
+      return (order[a["구분"]]||0) - (order[b["구분"]]||0);
     });
-    if(data.length===0){ toast("내보낼 기록이 없어요."); return; }
+    var detailHeaders = ["날짜","사번","이름","부서","지점","구분","시각","상태","확인방식","기기ID","IP","수정자","수정시각"];
+    var detailWidths  = [11, 9, 9, 16, 10, 7, 7, 7, 10, 10, 14, 10, 17];
+
+    // ---- 요약: per-employee monthly totals, ready to hand over as a report ----
+    var byEmp = {};
+    rows.forEach(function(r){
+      var e = byEmp[r.empId] = byEmp[r.empId] || { empId:r.empId, name:r.name, dept:r.dept||"", site:r.site, inDates:{}, late:0, early:0, tripDates:{} };
+      if(r.status === "출장") e.tripDates[r.date] = true;
+      if(r.type === "in" && r.status !== "출장"){
+        e.inDates[r.date] = true;
+        if(r.status === "지각") e.late++;
+      }
+      if(r.type === "out" && r.status === "조퇴") e.early++;
+    });
+    var summary = Object.keys(byEmp).map(function(k){
+      var e = byEmp[k];
+      return {
+        "사번": e.empId, "이름": e.name, "부서": e.dept,
+        "지점": state.config.sites[e.site] ? state.config.sites[e.site].label : (e.site||""),
+        "출근일수": Object.keys(e.inDates).length,
+        "지각": e.late, "조퇴": e.early, "출장일수": Object.keys(e.tripDates).length
+      };
+    }).sort(function(a,b){ return String(a["이름"]||"").localeCompare(String(b["이름"]||""), "ko"); });
+    var summaryHeaders = ["사번","이름","부서","지점","출근일수","지각","조퇴","출장일수"];
+    var summaryWidths  = [9, 9, 16, 10, 9, 7, 7, 9];
+
     try{
-      var ws = XLSX.utils.json_to_sheet(data);
       var wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, state.adminMonth);
+      XLSX.utils.book_append_sheet(wb, sheetWithTitle("3R 출퇴근 요약 리포트", subtitleLine, summaryHeaders, summary, summaryWidths), "요약");
+      XLSX.utils.book_append_sheet(wb, sheetWithTitle("3R 출퇴근 상세기록", subtitleLine, detailHeaders, detail, detailWidths), "상세기록");
       XLSX.writeFile(wb, "출퇴근기록_"+state.adminMonth+".xlsx");
       toast("엑셀 파일을 다운로드했어요.");
     }catch(e){ toast("내보내기에 실패했어요."); }
@@ -685,7 +794,7 @@
   }
 
   function IdentityScreen(){
-    var options = [el("option",{value:""},["직원을 선택하세요"])].concat(
+    var options = [el("option",{value:""},["본인 이름을 선택하세요"])].concat(
       state.employees.map(function(e){ return el("option",{value:e.empId},[e.name + " · " + (e.dept||"미지정")]); })
     );
     var sel = el("select",{onchange:function(ev){ if(ev.target.value) chooseIdentity(ev.target.value); }}, options);
@@ -718,6 +827,7 @@
 
   function MeScreen(emp){
     var site = state.config.sites[emp.site] || {label: emp.site};
+    var hours = effectiveHours(emp);
     var anyIpConfigured = Object.keys(state.config.sites).some(function(k){
       return String(state.config.sites[k].ip||"").trim().length > 0;
     });
@@ -728,11 +838,11 @@
     var hasIn = todays.some(function(r){ return r.type==="in"; });
     var hasOut = todays.some(function(r){ return r.type==="out"; });
 
-    var reminderTime = shiftHHMM(state.config.workStart, -15);
+    var reminderTime = shiftHHMM(hours.start, -15);
     var showReminder = !hasIn && HHMM() >= reminderTime;
     var reminderBanner = !showReminder ? null : el("div",{class:"card", style:"background:var(--warn-soft);border:1px solid var(--warn);"},[
       el("div",{style:"font-weight:700;color:var(--warn);"},["⏰ 출근 체크 잊지 마세요"]),
-      el("div",{class:"muted", style:"font-size:13px;"},["근무 시작(" + state.config.workStart + ") 전후예요. 출근하기 버튼을 눌러 체크해주세요."])
+      el("div",{class:"muted", style:"font-size:13px;"},["근무 시작(" + hours.start + ") 전후예요. 출근하기 버튼을 눌러 체크해주세요."])
     ]);
 
     var tripToggle = el("label",{class:"row", style:"gap:8px;align-items:center;cursor:pointer;"},[
@@ -778,7 +888,8 @@
         el("div",{class:"row"},[
           el("div",{class:"col",style:"gap:2px;"},[
             el("span",{style:"font-weight:800;font-size:17px;font-family:var(--font-head);"},[emp.name]),
-            el("span",{class:"faint"},[emp.empId+" · "+(emp.dept||"미지정")])
+            el("span",{class:"faint"},[emp.empId+" · "+(emp.dept||"미지정")]),
+            (emp.workStart || emp.workEnd) ? el("span",{class:"faint"},["근무시간 "+hours.start+"~"+hours.end+" (개별 설정)"]) : null
           ]),
           el("span",{class:"badge-site"},[site.label])
         ]),
@@ -806,10 +917,31 @@
         el("span",{class:"faint"},["관리자: "+((state.authUser&&state.authUser.email)||"")]),
         el("button",{class:"link-btn", onclick:adminLogout},["로그아웃"])
       ]),
+      AdminSuspectCard(),
       AdminRecordsCard(),
       AdminEmployeesCard(),
       AdminSettingsCard(),
       AdminSeedCard()
+    ]);
+  }
+
+  function AdminSuspectCard(){
+    var suspects = computeSuspectDevices();
+    var keys = Object.keys(suspects);
+    if(!keys.length) return null;
+    var rows = keys.map(function(dev){
+      var names = suspects[dev].map(function(p){ return p.name+"("+p.empId+")"; }).join(", ");
+      return el("div",{class:"row card-tight", style:"border:1px solid var(--bad);border-radius:10px;background:var(--bad-soft);"},[
+        el("div",{class:"col",style:"gap:2px;"},[
+          el("span",{style:"font-weight:700;font-size:13px;color:var(--bad);"},["기기 "+dev]),
+          el("span",{class:"faint"},[names])
+        ])
+      ]);
+    });
+    return el("div",{class:"card", style:"border:1px solid var(--bad);"},[
+      el("h3",{style:"font-size:15px;color:var(--bad);"},["⚠ 대리출근 의심"]),
+      el("div",{class:"muted", style:"font-size:12.5px;"},["같은 기기로 서로 다른 사번이 체크인됐어요 (이번 달 기준). 사무실 공용 PC로 여러 명이 정상적으로 찍은 경우일 수도 있으니, 아래 기록을 확인해보세요."]),
+      el("div",{class:"col"}, rows)
     ]);
   }
 
@@ -822,6 +954,7 @@
       el("option",{value:"daejeon", selected:state.adminSiteFilter==="daejeon"},["대전"])
     ]);
     var rows = state.adminRows.filter(function(r){ return state.adminSiteFilter==="all" || r.site===state.adminSiteFilter; });
+    var suspects = computeSuspectDevices();
     var selectedCount = rows.filter(function(r){ return state.adminSelected[rowKey(r)]; }).length;
     var allSelected = rows.length>0 && selectedCount===rows.length;
 
@@ -841,6 +974,10 @@
         ["정상","지각","조퇴","출장"].map(function(s){ return el("option",{value:s, selected:r.status===s},[s]); }));
       var cb = el("input",{type:"checkbox", checked:!!state.adminSelected[key],
         onchange:function(ev){ state.adminSelected[key] = ev.target.checked; render(); }});
+      var isSuspect = !!(r.device && suspects[r.device]);
+      var deviceCell = r.device
+        ? el("span",{title:r.device, style:isSuspect ? "color:var(--bad);font-weight:700;" : "color:var(--ink-faint);"},[(isSuspect?"⚠ ":"")+r.device])
+        : el("span",{class:"faint"},["-"]);
       return el("tr",{},[
         el("td",{},[cb]),
         el("td",{},[r.date]),
@@ -850,6 +987,7 @@
         el("td",{},[timeInput]),
         el("td",{},[statusSel]),
         el("td",{class:"num"},[r.method==="wifi" ? "와이파이" : (r.distanceM==null ? "-" : String(r.distanceM)+"m")]),
+        el("td",{class:"num"},[deviceCell]),
         el("td",{},[el("button",{class:"btn btn-sm btn-danger", onclick:function(){ adminDeleteRecord(r); }},["삭제"])])
       ]);
     });
@@ -865,7 +1003,7 @@
       state.adminLoading ? el("div",{class:"muted"},["불러오는 중…"]) :
         rows.length===0 ? el("div",{class:"muted"},["이 달 기록이 없어요."]) :
         el("div",{class:"tablewrap"},[el("table",{},[
-          el("thead",{},[el("tr",{}, [el("th",{},[selectAllCb])].concat(["날짜","이름","지점","구분","시각","상태","거리",""].map(function(h){ return el("th",{},[h]); })))]),
+          el("thead",{},[el("tr",{}, [el("th",{},[selectAllCb])].concat(["날짜","이름","지점","구분","시각","상태","거리","기기",""].map(function(h){ return el("th",{},[h]); })))]),
           el("tbody",{}, tbody)
         ])]),
       el("div",{class:"row"},[
@@ -879,18 +1017,21 @@
   }
 
   function AdminEmployeesCard(){
+    var cfg = state.config;
     var draft = state.empDraftId==="__new__" ? {empId:"",name:"",dept:"",site:"seoul"} :
       (state.empDraftId ? state.employees.find(function(e){return e.empId===state.empDraftId;}) : null);
 
     var list = state.employees.map(function(e){
+      var hoursBadge = (e.workStart || e.workEnd) ? el("span",{class:"badge-site", style:"background:var(--warn-soft);color:var(--warn);"},[(e.workStart||cfg.workStart)+"~"+(e.workEnd||cfg.workEnd)]) : null;
       return el("div",{class:"row card-tight", style:"border:1px solid var(--border);border-radius:10px;"},[
         el("div",{class:"col",style:"gap:1px;"},[
           el("span",{style:"font-weight:700;font-size:13px;"},[e.name+" · "+e.empId]),
           el("span",{class:"faint"},[e.dept||"미지정"])
         ]),
         el("div",{class:"row",style:"gap:6px;flex:none;"},[
+          hoursBadge,
           el("span",{class:"badge-site"},[state.config.sites[e.site]?state.config.sites[e.site].label:e.site]),
-          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId=e.empId; render(); }},["수정"])
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId=e.empId; state.empDraftOverrideOn = !!(e.workStart || e.workEnd); render(); }},["수정"])
         ])
       ]);
     });
@@ -904,9 +1045,19 @@
         el("option",{value:"seoul", selected:draft.site==="seoul"},["서울"]),
         el("option",{value:"daejeon", selected:draft.site==="daejeon"},["대전"])
       ]);
+      var overrideCb = el("input",{type:"checkbox", checked:state.empDraftOverrideOn,
+        onchange:function(ev){ state.empDraftOverrideOn = ev.target.checked; render(); }});
+      var overrideStartIn = el("input",{type:"time", value: draft.workStart || cfg.workStart});
+      var overrideEndIn = el("input",{type:"time", value: draft.workEnd || cfg.workEnd});
+      var overrideRow = state.empDraftOverrideOn ? el("div",{class:"grid2"},[
+        el("label",{class:"field"},["근무 시작(예외)", overrideStartIn]),
+        el("label",{class:"field"},["근무 종료(예외)", overrideEndIn])
+      ]) : null;
       formCard = el("div",{class:"card card-tight", style:"border:1px dashed var(--border);"},[
         el("div",{class:"grid2"},[idIn, nameIn]),
         el("div",{class:"grid2"},[deptIn, siteSel2]),
+        el("label",{class:"checkbox-row"},[overrideCb, el("span",{},["이 직원은 근무시간이 달라요 (기본 "+cfg.workStart+"~"+cfg.workEnd+")"])]),
+        overrideRow,
         el("div",{class:"row"},[
           el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId=null; render(); }},["취소"]),
           el("div",{class:"row",style:"gap:6px;"},[
@@ -915,7 +1066,12 @@
             el("button",{class:"btn btn-primary btn-sm", onclick:function(){
               var empId = idIn.value.trim();
               if(!empId || !nameIn.value.trim()){ toast("사번과 이름을 입력해주세요."); return; }
-              adminSaveEmployee({ empId:empId, name:nameIn.value.trim(), dept:deptIn.value.trim(), site:siteSel2.value });
+              var empObj = { empId:empId, name:nameIn.value.trim(), dept:deptIn.value.trim(), site:siteSel2.value };
+              if(state.empDraftOverrideOn){
+                empObj.workStart = overrideStartIn.value;
+                empObj.workEnd = overrideEndIn.value;
+              }
+              adminSaveEmployee(empObj);
             }},["저장"])
           ])
         ])
@@ -942,7 +1098,7 @@
         el("h3",{style:"font-size:15px;"},["직원 관리"]),
         el("div",{class:"row", style:"gap:6px;"},[
           el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.bulkAddOpen=!state.bulkAddOpen; state.empDraftId=null; render(); }},["여러 명 한꺼번에 추가"]),
-          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId="__new__"; state.bulkAddOpen=false; render(); }},["+ 직원 추가"])
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId="__new__"; state.empDraftOverrideOn=false; state.bulkAddOpen=false; render(); }},["+ 직원 추가"])
         ])
       ]),
       bulkCard,
@@ -969,7 +1125,8 @@
       el("div",{class:"grid2"},[mk("명칭", seoulLabel), mk("와이파이 공인 IP", seoulIp)]),
       el("div",{class:"muted"},["대전 사업장"]),
       el("div",{class:"grid2"},[mk("명칭", daejeonLabel), mk("와이파이 공인 IP", daejeonIp)]),
-      el("div",{class:"grid2"},[mk("근무 시작", startIn), mk("근무 종료", endIn)]),
+      el("div",{class:"grid2"},[mk("기본 근무 시작", startIn), mk("기본 근무 종료", endIn)]),
+      el("div",{class:"muted", style:"font-size:12px;"},["직원마다 근무시간이 다르면 '직원 관리'에서 그 직원만 예외로 설정할 수 있어요."]),
       mk("개인정보 동의 안내문", policyIn),
       el("button",{class:"btn btn-primary", onclick:function(){
         adminSaveSettings({
