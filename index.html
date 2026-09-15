@@ -409,9 +409,22 @@
   }
 
   function signInWithGoogle(){
+    // signInWithPopup rather than signInWithRedirect — Chrome's bounce-tracking
+    // mitigation can wipe the Firebase authDomain's storage mid-flow on a
+    // redirect chain (github.io -> firebaseapp.com/__/auth/handler -> google.com
+    // -> back), which silently drops the pending sign-in and bounces the user
+    // back to the login screen. A popup never leaves the current tab, so that
+    // redirect chain — and the mitigation that targets it — never comes into play.
     var provider = new firebase.auth.GoogleAuthProvider();
     provider.setCustomParameters({ hd: ALLOWED_EMAIL_DOMAIN }); // hints Google's account picker to the work domain (UX only, not a security check)
-    auth.signInWithRedirect(provider).catch(function(){ toast("로그인을 시작하지 못했어요. 다시 시도해주세요."); });
+    auth.signInWithPopup(provider).catch(function(e){
+      if(e && e.code === "auth/popup-closed-by-user") return; // user backed out — no error needed
+      if(e && e.code === "auth/popup-blocked"){
+        toast("팝업이 차단됐어요. 브라우저 팝업 차단을 해제하고 다시 시도해주세요.", 4500);
+        return;
+      }
+      toast("로그인에 실패했어요"+((e&&e.code)?" ("+e.code+")":"")+".", 4200);
+    });
   }
 
   function employeeSignOut(){
@@ -433,13 +446,6 @@
     }catch(e){
       configMissing = true; capsReady = true; render(); return;
     }
-
-    // surfaces a clear error if signInWithRedirect couldn't complete (e.g. this
-    // site's domain isn't in Firebase's authorized-domains list yet) instead of
-    // failing silently.
-    auth.getRedirectResult().catch(function(e){
-      toast("구글 로그인에 실패했어요"+((e&&e.code)?" ("+e.code+")":"")+".", 4500);
-    });
 
     // waits for Firebase to report whatever session was already persisted (admin
     // login or a signed-in Google/anonymous session survives a refresh on its own)
