@@ -417,7 +417,15 @@
     // redirect chain — and the mitigation that targets it — never comes into play.
     var provider = new firebase.auth.GoogleAuthProvider();
     provider.setCustomParameters({ hd: ALLOWED_EMAIL_DOMAIN }); // hints Google's account picker to the work domain (UX only, not a security check)
-    auth.signInWithPopup(provider).catch(function(e){
+    auth.signInWithPopup(provider).then(function(result){
+      // Don't just wait for the shared onAuthStateChanged listener — update state
+      // and re-render right here so the UI reflects the login the instant the
+      // popup resolves, instead of needing a manual page refresh to catch up.
+      state.authUser = result.user;
+      state.isAdmin = isPasswordUser(result.user);
+      syncGoogleIdentity();
+      render();
+    }).catch(function(e){
       if(e && e.code === "auth/popup-closed-by-user") return; // user backed out — no error needed
       if(e && e.code === "auth/popup-blocked"){
         toast("팝업이 차단됐어요. 브라우저 팝업 차단을 해제하고 다시 시도해주세요.", 4500);
