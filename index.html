@@ -608,7 +608,13 @@
       await auth.signInWithEmailAndPassword(email, pw);
       toast("로그인되었어요.");
       loadAdminMonth();
-    }catch(e){ toast("로그인에 실패했어요. 이메일/비밀번호를 확인해주세요."); }
+    }catch(e){
+      // Surface the actual Firebase error code so a login failure can be told
+      // apart from a wrong password (e.g. account disabled/deleted, or too
+      // many failed attempts triggering a temporary lockout) without needing
+      // to check the Firebase console first.
+      toast("로그인에 실패했어요. 이메일/비밀번호를 확인해주세요."+((e&&e.code)?" ("+e.code+")":""), 4500);
+    }
   }
   async function adminLogout(){
     try{ await auth.signOut(); await auth.signInAnonymously(); }catch(e){}
