@@ -152,11 +152,11 @@
     radiusM: 100,
     workStart: "10:00",
     workEnd: "18:30",
-    policyVersion: "2026-09-15",
+    policyVersion: "2026-09-15-2",
     policyText:
 "■ 사업장 네트워크 기반 출퇴근관리 개인정보 수집·이용 동의서 (요약)\n\n" +
 "1. 수집 목적: 사업장 출퇴근 여부 확인 및 근태관리\n" +
-"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 네트워크(사무실 와이파이) 인식 여부, 기기 식별값(대리출근 등 이상 여부 확인 목적), 로그인에 사용한 회사 구글 계정 이메일. 출퇴근 체크 시 GPS 등 개인 위치좌표는 수집하지 않습니다.\n" +
+"2. 수집 항목: 사번, 성명, 부서, 출퇴근 시각, 접속 네트워크(사무실 와이파이) 인식 여부, 기기 정보, 로그인에 사용한 회사 구글 계정 이메일. 출퇴근 체크 시 GPS 등 개인 위치좌표는 수집하지 않습니다.\n" +
 "3. 보유·이용 기간: 재직 기간 중 활용하며, 퇴사일로부터 3년간 보관 후 파기합니다(근로기준법상 근로자 명부·임금대장 보존 의무 기준).\n" +
 "4. 처리 방식: 접속 정보는 출퇴근 인정 여부 판단 목적으로만 사용하며, 회사는 관련 법령을 준수하여 이를 처리합니다. 근무시간 외에는 별도로 수집하지 않습니다.\n" +
 "5. 제3자 제공: 법령에 근거가 없는 한 수집한 정보를 외부에 제공하지 않습니다.\n" +
@@ -212,6 +212,7 @@
     empDraftId: null,
     empDraftOverrideOn: false,
     bulkAddOpen: false,
+    bulkEmailOpen: false,
     adminSelected: {},
     tripMode: false
   };
@@ -749,6 +750,131 @@
     }catch(e){ toast("일괄 등록에 실패했어요. 관리자 계정으로 로그인했는지 확인해주세요."); return false; }
   }
 
+  // template for the bulk-email panel: one line per EXISTING employee, prefilled
+  // with their current email (if any) so the admin only has to fill in the blanks
+  // rather than retype every employee's info from scratch.
+  function buildBulkEmailTemplate(){
+    return state.employees
+      .slice()
+      .sort(function(a,b){ return a.empId.localeCompare(b.empId); })
+      .map(function(e){ return e.empId+","+e.name+","+(e.email||""); })
+      .join("\n");
+  }
+
+  // downloadable .xlsx counterpart of the same template: 사번/이름/이메일 for
+  // every existing employee, so the admin can fill it in with Excel and
+  // re-upload it rather than editing the on-page textarea.
+  function downloadEmailTemplateXlsx(){
+    if(typeof XLSX === "undefined"){ toast("표 생성 라이브러리를 불러오는 중이에요. 잠시 후 다시 시도해주세요."); return; }
+    var rows = state.employees.slice().sort(function(a,b){ return a.empId.localeCompare(b.empId); })
+      .map(function(e){ return [e.empId, e.name, e.email||""]; });
+    var aoa = [["사번","이름","이메일"]].concat(rows);
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = [{wch:10},{wch:16},{wch:28}];
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "이메일");
+    XLSX.writeFile(wb, "직원이메일_양식.xlsx");
+  }
+
+  // 형식: 사번,이름(참고용, 실제로는 무시됨),이메일 — 각 줄의 마지막 칸을 이메일로
+  // 읽으므로 "사번,이메일" 두 칸짜리 줄도 그대로 지원한다.
+  function parseBulkEmails(text){
+    var lines = text.split("\n").map(function(l){ return l.trim(); }).filter(function(l){ return l.length; });
+    var rows = [], errors = [];
+    lines.forEach(function(line, idx){
+      var parts = line.split(",").map(function(p){ return p.trim(); });
+      var empId = parts[0];
+      var email = (parts[parts.length-1] || "").toLowerCase();
+      if(!empId){ errors.push((idx+1)+"행: 사번이 비어있어요 → \""+line+"\""); return; }
+      if(!state.employees.find(function(e){ return e.empId === empId; })){
+        errors.push((idx+1)+"행: 사번 "+empId+"인 직원을 찾을 수 없어요.");
+        return;
+      }
+      if(!email || email.indexOf("@") === -1){
+        errors.push((idx+1)+"행("+empId+"): 이메일 형식이 아니에요 → \""+(parts[parts.length-1]||"")+"\"");
+        return;
+      }
+      rows.push({ empId:empId, email:email });
+    });
+    return { rows:rows, errors:errors };
+  }
+
+  // shared commit step for both the textarea path and the Excel-upload path:
+  // updates ONLY the email field on each matched existing employee doc (via
+  // {merge:true}), so dept/site/근무시간 예외 같은 다른 필드는 그대로 남는다 —
+  // 전체 필드를 다시 입력해야 하는 기존 "일괄 등록"과 달리 이메일만 안전하게 갱신.
+  async function commitBulkEmails(rows){
+    if(!rows.length){ toast("등록할 이메일이 없어요."); return false; }
+    try{
+      var batch = db.batch();
+      rows.forEach(function(r){ batch.set(db.doc("employees/"+r.empId), { email:r.email }, { merge:true }); });
+      await batch.commit();
+      toast(rows.length+"명의 이메일이 저장되었어요.");
+      return true;
+    }catch(e){ toast("일괄 저장에 실패했어요. 관리자 계정으로 로그인했는지 확인해주세요."); return false; }
+  }
+
+  async function adminBulkUpdateEmails(text){
+    var parsed = parseBulkEmails(text);
+    if(parsed.errors.length){ toast("형식 오류 "+parsed.errors.length+"건:\n"+parsed.errors.slice(0,5).join("\n"), 5500); return false; }
+    return commitBulkEmails(parsed.rows);
+  }
+
+  // finds the 사번/이메일 columns by header text (여러 흔한 표기를 인식), so an
+  // admin's own HR 스프레드시트를 열 순서·추가 칼럼 상관없이 그대로 올릴 수 있다.
+  // 인식 가능한 헤더가 없으면 우리 템플릿과 같은 "사번,이름,이메일" 순서로 간주한다.
+  function detectEmailColumns(headerRow){
+    var idAliases = ["사번","사원번호","empid","employeeid","id"];
+    var emailAliases = ["이메일","email","구글이메일","googleemail","이메일주소","emailaddress","gmail","g메일"];
+    var idIdx = -1, emailIdx = -1;
+    (headerRow||[]).forEach(function(cell, i){
+      var v = String(cell===undefined||cell===null ? "" : cell).trim().toLowerCase().replace(/\s+/g,"");
+      if(idIdx===-1 && idAliases.indexOf(v)!==-1) idIdx = i;
+      if(emailIdx===-1 && emailAliases.indexOf(v)!==-1) emailIdx = i;
+    });
+    return { idIdx:idIdx, emailIdx:emailIdx };
+  }
+
+  function parseExcelRowsToEmails(aoa){
+    if(!aoa || !aoa.length) return { rows:[], errors:["빈 파일이에요."] };
+    var idIdx = 0, emailIdx = 2, startRow = 0;
+    var detected = detectEmailColumns(aoa[0]);
+    if(detected.idIdx !== -1 && detected.emailIdx !== -1){
+      idIdx = detected.idIdx; emailIdx = detected.emailIdx; startRow = 1; // skip header row
+    }
+    var rows = [], errors = [];
+    for(var r = startRow; r < aoa.length; r++){
+      var row = aoa[r] || [];
+      var empId = String(row[idIdx]===undefined||row[idIdx]===null ? "" : row[idIdx]).trim();
+      var email = String(row[emailIdx]===undefined||row[emailIdx]===null ? "" : row[emailIdx]).trim().toLowerCase();
+      if(!empId && !email) continue; // blank row
+      if(!empId){ errors.push((r+1)+"행: 사번이 비어있어요."); continue; }
+      if(!state.employees.find(function(e){ return e.empId === empId; })){
+        errors.push((r+1)+"행: 사번 "+empId+"인 직원을 찾을 수 없어요.");
+        continue;
+      }
+      if(!email || email.indexOf("@") === -1){
+        errors.push((r+1)+"행("+empId+"): 이메일 형식이 아니에요 → \""+email+"\"");
+        continue;
+      }
+      rows.push({ empId:empId, email:email });
+    }
+    return { rows:rows, errors:errors };
+  }
+
+  async function adminBulkUpdateEmailsFromExcel(file){
+    if(typeof XLSX === "undefined"){ toast("표 읽기 라이브러리를 불러오는 중이에요. 잠시 후 다시 시도해주세요."); return false; }
+    try{
+      var buf = await file.arrayBuffer();
+      var wb = XLSX.read(buf, {type:"array"});
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var aoa = XLSX.utils.sheet_to_json(ws, {header:1, blankrows:false, defval:""});
+      var parsed = parseExcelRowsToEmails(aoa);
+      if(parsed.errors.length){ toast("형식 오류 "+parsed.errors.length+"건:\n"+parsed.errors.slice(0,5).join("\n"), 5500); return false; }
+      return await commitBulkEmails(parsed.rows);
+    }catch(e){ toast("엑셀 파일을 읽는 데 실패했어요. 파일 형식을 확인해주세요."); return false; }
+  }
+
   async function seedInitialData(){
     try{
       var existing = await db.collection("employees").limit(1).get();
@@ -813,13 +939,18 @@
     var subtitleLine = "대상 월: "+state.adminMonth+" · 지점: "+siteLabel+" · 생성: "+TODAY_KEY(now)+" "+HHMM(now);
 
     // ---- 상세기록: every check-in/out, oldest first so it reads top-to-bottom like a log ----
+    // 기기ID/IP는 관리자 화면(대리출근 의심 감지)에서 계속 쓰이지만 리포트에는
+    // 굳이 필요 없는 원시값이라 내보내지 않고, 대신 로그인 이메일로 누가 찍었는지
+    // 바로 알아볼 수 있게 한다 (직원 정보에서 사번으로 조회).
+    var emailByEmpId = {};
+    state.employees.forEach(function(e){ emailByEmpId[e.empId] = e.email || ""; });
     var detail = rows.map(function(r){
       return {
         "날짜": r.date, "사번": r.empId, "이름": r.name, "부서": r.dept||"",
         "지점": state.config.sites[r.site] ? state.config.sites[r.site].label : (r.site||""),
         "구분": r.type==="in" ? "출근" : "퇴근", "시각": r.time, "상태": r.status,
         "확인방식": r.method==="wifi" ? "와이파이" : (r.method==="gps" ? "GPS" : (r.status==="출장" ? "출장(자가신고)" : (r.distanceM!=null ? "GPS" : ""))),
-        "기기ID": r.device || "", "IP": r.ip || "",
+        "이메일": emailByEmpId[r.empId] || "",
         "수정자": r.editedBy||"", "수정시각": r.editedAt||""
       };
     }).sort(function(a,b){
@@ -829,8 +960,8 @@
       var order = {"출근":0, "퇴근":1};
       return (order[a["구분"]]||0) - (order[b["구분"]]||0);
     });
-    var detailHeaders = ["날짜","사번","이름","부서","지점","구분","시각","상태","확인방식","기기ID","IP","수정자","수정시각"];
-    var detailWidths  = [11, 9, 9, 16, 10, 7, 7, 7, 10, 10, 14, 10, 17];
+    var detailHeaders = ["날짜","사번","이름","부서","지점","구분","시각","상태","확인방식","이메일","수정자","수정시각"];
+    var detailWidths  = [11, 9, 9, 16, 10, 7, 7, 7, 10, 24, 10, 17];
 
     // ---- 요약: per-employee monthly totals, ready to hand over as a report ----
     var byEmp = {};
@@ -1237,15 +1368,43 @@
       ]);
     }
 
+    var bulkEmailCard = null;
+    if(state.bulkEmailOpen){
+      var bulkEmailTa = el("textarea",{style:"min-height:220px;font-family:monospace;font-size:12px;"},[buildBulkEmailTemplate()]);
+      var excelIn = el("input",{type:"file", accept:".xlsx,.xls,.csv", onchange:function(ev){
+        var file = ev.target.files && ev.target.files[0];
+        ev.target.value = ""; // allow re-selecting the same file name after a fix
+        if(!file) return;
+        adminBulkUpdateEmailsFromExcel(file).then(function(ok){ if(ok){ state.bulkEmailOpen=false; render(); } });
+      }});
+      bulkEmailCard = el("div",{class:"card card-tight", style:"border:1px dashed var(--border);"},[
+        el("div",{class:"muted"},["엑셀(.xlsx) 또는 CSV 파일로 바로 업로드할 수 있어요. \"사번\" · \"이메일\" 헤더가 있는 칸을 자동으로 찾아서 읽고, 헤더가 없으면 사번·이름·이메일 순서로 읽어요."]),
+        el("div",{class:"row",style:"gap:8px;align-items:center;"},[
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ downloadEmailTemplateXlsx(); }},["빈 양식(.xlsx) 다운로드"]),
+          excelIn
+        ]),
+        el("div",{class:"muted", style:"font-size:12px;"},["또는 아래에서 바로 수정: 기존 직원 전체 목록이 사번,이름,이메일 형식으로 미리 채워져 있어요. 이메일 칸만 채우거나 고쳐서 저장하면 돼요 (사번·이름 칸은 참고용이라 그대로 둬도 무시돼요). 어느 방법이든 다른 정보(부서·지점·근무시간 예외)는 건드리지 않아요."]),
+        bulkEmailTa,
+        el("div",{class:"row"},[
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.bulkEmailOpen=false; render(); }},["취소"]),
+          el("button",{class:"btn btn-primary btn-sm", onclick:function(){
+            adminBulkUpdateEmails(bulkEmailTa.value).then(function(ok){ if(ok){ state.bulkEmailOpen=false; render(); } });
+          }},["텍스트 칸으로 저장"])
+        ])
+      ]);
+    }
+
     return el("div",{class:"card"},[
       el("div",{class:"row"},[
         el("h3",{style:"font-size:15px;"},["직원 관리"]),
         el("div",{class:"row", style:"gap:6px;"},[
-          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.bulkAddOpen=!state.bulkAddOpen; state.empDraftId=null; render(); }},["여러 명 한꺼번에 추가"]),
-          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId="__new__"; state.empDraftOverrideOn=false; state.bulkAddOpen=false; render(); }},["+ 직원 추가"])
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.bulkEmailOpen=!state.bulkEmailOpen; state.empDraftId=null; state.bulkAddOpen=false; render(); }},["이메일 일괄 등록/수정"]),
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.bulkAddOpen=!state.bulkAddOpen; state.empDraftId=null; state.bulkEmailOpen=false; render(); }},["여러 명 한꺼번에 추가"]),
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.empDraftId="__new__"; state.empDraftOverrideOn=false; state.bulkAddOpen=false; state.bulkEmailOpen=false; render(); }},["+ 직원 추가"])
         ])
       ]),
       noEmailCount ? el("div",{class:"muted", style:"font-size:12px;color:var(--bad);"},["⚠ "+noEmailCount+"명이 아직 이메일 미등록 상태예요 — 등록 전까지는 구글 로그인으로 매칭이 안 돼요."]) : null,
+      bulkEmailCard,
       bulkCard,
       formCard,
       el("div",{class:"col"}, list)
