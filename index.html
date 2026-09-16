@@ -219,6 +219,7 @@
     empDraftOverrideOn: false,
     bulkAddOpen: false,
     bulkEmailOpen: false,
+    manualAddOpen: false,   // 관리자가 깜빡한 출퇴근 기록을 직접 추가하는 패널
     adminSelected: {},
     confirmingCheckout: false, // "퇴근하기"는 실수로 누르면 되돌리기 번거로우니 한 번 더 확인받는다
     confirmingReset: false,    // "전체 초기화"는 되돌릴 수 없는 파괴적 동작이라 한 번 더 확인받는다
@@ -696,6 +697,37 @@
 
   function rowKey(r){ return r._docId + "#" + r._idx; }
 
+  // 직원이 출근/퇴근 체크를 아예 안 찍은 날을 위한 기능 — 기존 기록 수정/삭제로는
+  // "없는" 기록을 채워 넣을 수 없어서 별도로 만든다. method:"manual"로 표시해
+  // 실제 와이파이 체크와 구분되게 하고, editedBy/editedAt에 입력한 관리자와
+  // 시각을 남겨 나중에 누가 손으로 넣은 기록인지 추적할 수 있게 한다.
+  async function adminAddRecord(empId, date, type, time, status){
+    var emp = state.employees.find(function(e){ return e.empId === empId; });
+    if(!emp){ toast("직원을 선택해주세요."); return false; }
+    if(!date){ toast("날짜를 입력해주세요."); return false; }
+    if(!time){ toast("시각을 입력해주세요."); return false; }
+    try{
+      var month = date.slice(0,7);
+      var docId = empId + "_" + month;
+      var ref = db.doc("checkins/"+docId);
+      var snap = await ref.get();
+      var records = (snap.exists && snap.data().records) ? snap.data().records.slice() : [];
+      var now = new Date();
+      var rec = {
+        date: date, type: type, time: time, ts: new Date(date+"T"+time+":00").toISOString(),
+        lat: null, lng: null, accuracy: null, distanceM: null, site: emp.site,
+        method: "manual", status: status, device: null, ip: null,
+        editedBy: (state.authUser&&state.authUser.email)||"admin", editedAt: now.toISOString()
+      };
+      records.push(rec);
+      var body = { empId: empId, name: emp.name, dept: emp.dept||"", site: emp.site, month: month, records: records };
+      if(snap.exists) await ref.update({ records: records }); else await ref.set(body);
+      toast("기록을 추가했어요.");
+      if(month === state.adminMonth) loadAdminMonth();
+      return true;
+    }catch(e){ toast("추가에 실패했어요. 관리자 권한이 있는 계정인지 확인해주세요."); return false; }
+  }
+
   async function adminBulkDeleteRecords(){
     var keys = Object.keys(state.adminSelected).filter(function(k){ return state.adminSelected[k]; });
     if(!keys.length){ toast("선택된 기록이 없어요."); return; }
@@ -974,7 +1006,7 @@
         "날짜": r.date, "사번": r.empId, "이름": r.name, "부서": r.dept||"",
         "지점": state.config.sites[r.site] ? state.config.sites[r.site].label : (r.site||""),
         "구분": r.type==="in" ? "출근" : "퇴근", "시각": r.time, "상태": r.status,
-        "확인방식": r.method==="wifi" ? "와이파이" : (r.method==="gps" ? "GPS" : (r.distanceM!=null ? "GPS" : "")),
+        "확인방식": r.method==="wifi" ? "와이파이" : (r.method==="manual" ? "관리자 입력" : (r.method==="gps" ? "GPS" : (r.distanceM!=null ? "GPS" : ""))),
         "이메일": emailByEmpId[r.empId] || "",
         "지각사유": r.reason || "",
         "수정자": r.editedBy||"", "수정시각": r.editedAt||""
@@ -1339,7 +1371,7 @@
         el("td",{},[r.type==="in"?"출근":"퇴근"]),
         el("td",{},[timeInput]),
         el("td",{},[statusSel, reasonMark]),
-        el("td",{class:"num"},[r.method==="wifi" ? "와이파이" : (r.distanceM==null ? "-" : String(r.distanceM)+"m")]),
+        el("td",{class:"num"},[r.method==="wifi" ? "와이파이" : (r.method==="manual" ? "관리자 입력" : (r.distanceM==null ? "-" : String(r.distanceM)+"m"))]),
         el("td",{class:"num"},[deviceCell]),
         el("td",{},[deleteCell])
       ]);
@@ -1352,14 +1384,56 @@
       }))
     ]) : null;
 
+    // 출근/퇴근 체크를 깜빡한 경우, 관리자가 없는 기록을 직접 추가할 수 있는 패널.
+    // 기존 기록 수정/삭제와 달리 새 기록을 "생성"하는 유일한 통로라 method:"manual"로
+    // 남겨서 실제 와이파이 체크와 항상 구분되게 한다.
+    var manualAddCard = null;
+    if(state.manualAddOpen){
+      var maEmpSel = el("select",{style:"min-width:160px;"}, state.employees.slice().sort(function(a,b){ return a.name.localeCompare(b.name,"ko"); }).map(function(e){
+        return el("option",{value:e.empId},[e.name+" ("+e.empId+")"]);
+      }));
+      var maDateIn = el("input",{type:"date", value: TODAY_KEY()});
+      var maTypeSel = el("select",{},[
+        el("option",{value:"in"},["출근"]),
+        el("option",{value:"out", selected:true},["퇴근"])
+      ]);
+      var maTimeIn = el("input",{type:"time", value:"18:30"});
+      var maStatusSel = el("select",{},["정상","지각","조퇴"].map(function(s){
+        return el("option",{value:s, selected:s==="정상"},[s]);
+      }));
+      manualAddCard = el("div",{class:"card card-tight", style:"border:1px dashed var(--border);"},[
+        el("div",{class:"muted", style:"font-size:12.5px;"},["출근이나 퇴근 체크를 깜빡한 직원을 위해 관리자가 대신 기록을 넣을 수 있어요. 이렇게 추가한 기록은 표에 \"관리자 입력\"으로 표시돼서 실제 와이파이 체크와 구분돼요."]),
+        el("div",{class:"grid2"},[
+          el("label",{class:"field"},["직원", maEmpSel]),
+          el("label",{class:"field"},["날짜", maDateIn])
+        ]),
+        el("div",{class:"grid2"},[
+          el("label",{class:"field"},["구분", maTypeSel]),
+          el("label",{class:"field"},["시각", maTimeIn])
+        ]),
+        el("label",{class:"field"},["상태", maStatusSel]),
+        el("div",{class:"row"},[
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.manualAddOpen=false; render(); }},["취소"]),
+          el("button",{class:"btn btn-primary btn-sm", onclick:function(){
+            if(!maEmpSel.value){ toast("등록된 직원이 없어요."); return; }
+            adminAddRecord(maEmpSel.value, maDateIn.value, maTypeSel.value, maTimeIn.value, maStatusSel.value).then(function(ok){
+              if(ok){ state.manualAddOpen=false; render(); }
+            });
+          }},["추가"])
+        ])
+      ]);
+    }
+
     return el("div",{class:"card"},[
       el("div",{class:"row", style:"flex-wrap:wrap;"},[
         el("h3",{style:"font-size:15px;"},["출퇴근 기록"]),
         el("div",{class:"row", style:"gap:8px;flex:none;"},[
           monthInput, siteSel,
+          el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ state.manualAddOpen=!state.manualAddOpen; render(); }},["기록 수동 추가"]),
           el("button",{class:"btn btn-ghost btn-sm", onclick:function(){ loadAdminMonth(); }},["새로고침"])
         ])
       ]),
+      manualAddCard,
       chronicLateBanner,
       state.adminLoading ? el("div",{class:"muted"},["불러오는 중…"]) :
         rows.length===0 ? el("div",{class:"muted"},["이 달 기록이 없어요."]) :
