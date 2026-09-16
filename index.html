@@ -147,8 +147,10 @@
     return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
   };
   var LS_DEVICE = "3ri_att_device_id";
-  // employees must sign in with a Google account on this domain — anything else is rejected.
-  var ALLOWED_EMAIL_DOMAIN = "focuspang.com";
+  // employees must sign in with a Google account on one of these domains — anything
+  // else is rejected. 첫 번째 도메인은 로그인 화면/안내 문구에서 대표 예시로 쓰인다.
+  var ALLOWED_EMAIL_DOMAINS = ["focuspang.com", "momentlumina.com"];
+  var ALLOWED_EMAIL_DOMAIN = ALLOWED_EMAIL_DOMAINS[0]; // 기존 코드 곳곳의 안내 문구/placeholder 예시용
 
   var DEFAULT_CONFIG = {
     sites: {
@@ -508,14 +510,16 @@
     var user = state.authUser;
     if(!isGoogleUser(user)){ state.googleUnmatched = false; return; }
 
-    var suffix = "@"+ALLOWED_EMAIL_DOMAIN;
     var email = (user.email || "").toLowerCase();
-    var domainOk = email.length > suffix.length && email.slice(-suffix.length) === suffix;
+    var domainOk = ALLOWED_EMAIL_DOMAINS.some(function(dom){
+      var suffix = "@"+dom;
+      return email.length > suffix.length && email.slice(-suffix.length) === suffix;
+    });
     if(!domainOk){
       state.myId = ""; state.googleUnmatched = false;
       if(!domainRejectInFlight){
         domainRejectInFlight = true;
-        toast("회사 이메일 계정("+ALLOWED_EMAIL_DOMAIN+")으로 로그인해주세요.", 4200);
+        toast("회사 이메일 계정("+ALLOWED_EMAIL_DOMAINS.join(" 또는 ")+")으로 로그인해주세요.", 4200);
         auth.signOut().then(function(){ return auth.signInAnonymously(); }).catch(function(){}).then(function(){ domainRejectInFlight = false; });
       }
       return;
@@ -543,7 +547,9 @@
     // back to the login screen. A popup never leaves the current tab, so that
     // redirect chain — and the mitigation that targets it — never comes into play.
     var provider = new firebase.auth.GoogleAuthProvider();
-    provider.setCustomParameters({ hd: ALLOWED_EMAIL_DOMAIN }); // hints Google's account picker to the work domain (UX only, not a security check)
+    // hd 힌트는 도메인 하나만 받을 수 있어서, 허용 도메인이 2개 이상이 된 지금은
+    // 굳이 하나만 편애하지 않도록 힌트를 빼고 계정 선택창을 그대로 보여준다.
+    // 실제 접근 제어는 로그인 후 syncGoogleIdentity()의 도메인 검사가 담당한다.
     auth.signInWithPopup(provider).then(function(result){
       // Don't just wait for the shared onAuthStateChanged listener — update state
       // and re-render right here so the UI reflects the login the instant the
@@ -1225,7 +1231,7 @@
   function IdentityScreen(){
     return el("div",{class:"card"},[
       el("h2",{},["로그인"]),
-      el("div",{class:"muted"},["본인의 회사 구글 계정(@"+ALLOWED_EMAIL_DOMAIN+")으로 로그인하면 직원 정보가 자동으로 연결돼요. 이 기기에서는 다음부터 로그인이 계속 유지돼요."]),
+      el("div",{class:"muted"},["본인의 회사 구글 계정("+ALLOWED_EMAIL_DOMAINS.map(function(d){return "@"+d;}).join(" 또는 ")+")으로 로그인하면 직원 정보가 자동으로 연결돼요. 이 기기에서는 다음부터 로그인이 계속 유지돼요."]),
       el("button",{class:"btn btn-primary", onclick:signInWithGoogle},["Google 계정으로 로그인"])
     ]);
   }
