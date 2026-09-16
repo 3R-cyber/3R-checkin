@@ -1592,6 +1592,26 @@
     if(state.tab === "me" && !state.busy) render();
   }, 30000);
 
+  /* ---------- admin idle auto-logout ----------
+     Firebase's own ID token TTL (~1hr) doesn't help here — the SDK silently
+     refreshes it in the background as long as the tab stays open, so a signed-in
+     admin session never expires on its own. We track real user activity
+     ourselves and force a sign-out after a period of no interaction, so an
+     admin panel left open on an unattended computer doesn't stay accessible
+     forever. */
+  var ADMIN_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30분 무활동 시 자동 로그아웃
+  var lastActivityAt = Date.now();
+  ["mousemove","mousedown","keydown","touchstart","scroll"].forEach(function(evt){
+    document.addEventListener(evt, function(){ lastActivityAt = Date.now(); }, { passive:true });
+  });
+  setInterval(function(){
+    if(state.isAdmin && (Date.now() - lastActivityAt) > ADMIN_IDLE_TIMEOUT_MS){
+      lastActivityAt = Date.now(); // avoid re-triggering every tick while signOut() is in flight
+      toast("장시간 활동이 없어 관리자 계정이 자동 로그아웃됐어요.", 4200);
+      adminLogout();
+    }
+  }, 30000);
+
   render();
   initFirebase();
 })();
