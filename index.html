@@ -291,29 +291,74 @@
     return out;
   }
 
-  // realRows: 이미 Firestore에서 불러온 이 달의 실제 기록. 재택 가능 요일인데
-  // 실제 출근("in") 기록이 없는 날짜마다 가짜 기록을 하나씩 만들어 돌려준다.
-  // Firestore에 저장되지 않는 계산값이라 _docId가 없고, 수정·삭제 대상도 아니다.
+  // 그 날짜가 속한 주(월요일 시작)의 월요일 날짜를 "주 키"로 돌려준다 — 재택 상한을
+  // 달력 월 경계와 상관없이 항상 월~일 단위로 맞게 끊기 위해 쓴다.
+  function weekKeyOf(dateStr){
+    var d = new Date(dateStr+"T00:00:00");
+    var day = d.getDay(); // 0=일 ... 6=토
+    var mondayOffset = (day===0) ? -6 : (1-day);
+    var monday = new Date(d);
+    monday.setDate(d.getDate()+mondayOffset);
+    return TODAY_KEY(monday);
+  }
+
+  // realRows: 이미 Firestore에서 불러온 이 달의 실제 기록. 재택 가능 요일인데 실제
+  // 출근("in") 기록이 없는 날짜마다 가짜 기록을 하나씩 만들어 돌려준다.
+  // Firestore에 저장되지 않는 계산값이라 _docId가 없고, 직접 수정 대상도 아니다.
+  // 단, "그 주에 아직 표시 안 된 날이 몇 개나 남았는지" 상한(remoteDaysPerWeek, 기본
+  // 2일)을 두어서 — 재택 요일 전부를 무조건 재택으로 찍어버리면 진짜 결근이나 체크
+  // 누락까지 전부 재택으로 묻혀버리기 때문에, 한 주에 먼저 오는 날짜부터 상한 개수
+  // 까지만 재택으로 인정하고 나머지는 그냥 빈 기록(관리자가 직접 확인)으로 둔다.
+  // remoteExcluded는 관리자가 특정 날짜의 재택 자동 표시를 직접 지운 기록.
   function computeRemoteRows(month, realRows){
     var out = [];
     state.employees.forEach(function(e){
       var days = e.remoteDays || [];
       if(!days.length) return;
+      var cap = e.remoteDaysPerWeek || 2;
+      var excluded = {};
+      (e.remoteExcluded||[]).forEach(function(d){ excluded[d] = true; });
       var haveIn = {};
       realRows.forEach(function(r){ if(r.empId===e.empId && r.type==="in") haveIn[r.date] = true; });
-      datesInMonthSoFar(month).forEach(function(ds){
-        if(days.indexOf(weekdayCodeOf(ds)) === -1) return;
-        if(haveIn[ds]) return;
-        out.push({
-          date: ds, type:"in", time:"", status:"재택", method:"remote",
-          empId:e.empId, name:e.name, dept:e.dept||"", site:e.site,
-          device:null, ip:null, distanceM:null, reason:"",
-          ts: ds+"T00:00:00.000Z",
-          _docId: "remote_"+e.empId+"_"+ds, _idx:0, synthetic:true
+
+      var candidates = datesInMonthSoFar(month).filter(function(ds){
+        return days.indexOf(weekdayCodeOf(ds)) !== -1 && !haveIn[ds] && !excluded[ds];
+      });
+      var byWeek = {};
+      candidates.forEach(function(ds){ (byWeek[weekKeyOf(ds)] = byWeek[weekKeyOf(ds)] || []).push(ds); });
+      Object.keys(byWeek).forEach(function(wk){
+        byWeek[wk].sort().slice(0, cap).forEach(function(ds){
+          out.push({
+            date: ds, type:"in", time:"", status:"재택", method:"remote",
+            empId:e.empId, name:e.name, dept:e.dept||"", site:e.site,
+            device:null, ip:null, distanceM:null, reason:"",
+            ts: ds+"T00:00:00.000Z",
+            _docId: "remote_"+e.empId+"_"+ds, _idx:0, synthetic:true
+          });
         });
       });
     });
     return out;
+  }
+
+  // 관리자가 특정 날짜의 자동 "재택" 표시를 지운다 — 실제로 결근이었거나 다른
+  // 이유로 이 날짜만은 재택으로 치고 싶지 않을 때. 진짜 Firestore 기록이 아니라
+  // 직원 문서에 "이 날짜는 재택 계산에서 빼라"는 예외를 남기는 방식이다.
+  async function adminExcludeRemoteDate(empId, date){
+    try{
+      var ref = db.doc("employees/"+empId);
+      var snap = await ref.get();
+      if(!snap.exists) return;
+      var excluded = (snap.data().remoteExcluded || []).slice();
+      if(excluded.indexOf(date) === -1) excluded.push(date);
+      await ref.update({ remoteExcluded: excluded });
+      // onSnapshot이 곧 state.employees를 갱신하지만, 그 전에 바로 화면에서
+      // 사라지도록 로컬 데이터도 같이 갱신해준다.
+      var localEmp = state.employees.find(function(e){ return e.empId===empId; });
+      if(localEmp) localEmp.remoteExcluded = excluded;
+      toast("이 날짜는 재택으로 표시하지 않도록 했어요.");
+      loadAdminMonth();
+    }catch(e){ toast("처리에 실패했어요. 관리자 권한이 있는 계정인지 확인해주세요."); }
   }
 
   // a random ID persisted in this browser's localStorage, so every check-in from
@@ -1412,7 +1457,16 @@
     var tbody = rows.map(function(r){
       var key = rowKey(r);
       if(r.synthetic){
-        // 재택 자동 표시 행 — 실제 문서가 없어서 수정/삭제 컨트롤 없이 읽기 전용으로 보여준다.
+        // 재택 자동 표시 행 — 실제 문서가 없어서 시각·상태는 고정 텍스트로만 보여주고,
+        // "삭제"는 실제 문서를 지우는 게 아니라 이 날짜를 재택 자동 계산에서 빼는
+        // 예외(remoteExcluded)로 남기는 것이다. 이것도 되돌릴 수 있는 건 아니라서
+        // 개별 기록 삭제와 똑같이 한 번 더 확인받는다.
+        var remoteDeleteCell = state.confirmDeleteKey === key
+          ? el("div",{class:"row", style:"gap:4px;flex-wrap:nowrap;"},[
+              el("button",{class:"btn btn-sm btn-bad", onclick:function(){ state.confirmDeleteKey=null; adminExcludeRemoteDate(r.empId, r.date); }},["정말 삭제"]),
+              el("button",{class:"btn btn-sm btn-ghost", onclick:function(){ state.confirmDeleteKey=null; render(); }},["취소"])
+            ])
+          : el("button",{class:"btn btn-sm btn-danger", onclick:function(){ state.confirmDeleteKey=key; render(); }},["삭제"]);
         return el("tr",{},[
           el("td",{},[el("span",{class:"faint"},["-"])]),
           el("td",{},[r.date]),
@@ -1423,7 +1477,7 @@
           el("td",{},[el("span",{class:"badge-site", style:"background:var(--info);color:var(--info-ink);"},["재택"])]),
           el("td",{class:"num"},["재택"]),
           el("td",{class:"num"},[el("span",{class:"faint"},["-"])]),
-          el("td",{},[el("span",{class:"faint"},["-"])])
+          el("td",{},[remoteDeleteCell])
         ]);
       }
       var timeInput = el("input",{type:"time", value:r.time, style:"width:96px;padding:5px 6px;font-size:12px;",
@@ -1543,7 +1597,7 @@
     var list = state.employees.map(function(e){
       var hoursBadge = (e.workStart || e.workEnd) ? el("span",{class:"badge-site", style:"background:var(--warn-soft);color:var(--warn);"},[(e.workStart||cfg.workStart)+"~"+(e.workEnd||cfg.workEnd)]) : null;
       var emailBadge = !e.email ? el("span",{class:"badge-site", style:"background:var(--bad-soft);color:var(--bad);"},["이메일 미등록"]) : null;
-      var remoteBadge = (e.remoteDays && e.remoteDays.length) ? el("span",{class:"badge-site", style:"background:var(--info);color:var(--info-ink);"},["재택 "+e.remoteDays.map(function(d){return WEEKDAY_LABELS[d];}).join("·")]) : null;
+      var remoteBadge = (e.remoteDays && e.remoteDays.length) ? el("span",{class:"badge-site", style:"background:var(--info);color:var(--info-ink);"},["재택 "+e.remoteDays.map(function(d){return WEEKDAY_LABELS[d];}).join("·")+" (주"+(e.remoteDaysPerWeek||2)+"일)"]) : null;
       return el("div",{class:"row card-tight", style:"border:1px solid var(--border);border-radius:10px;"},[
         el("div",{class:"col",style:"gap:1px;"},[
           el("span",{style:"font-weight:700;font-size:13px;"},[e.name+" · "+e.empId]),
@@ -1583,11 +1637,13 @@
       var remoteDayInputs = REMOTE_DAY_OPTS.map(function(p){
         return el("input",{type:"checkbox", checked:(draft.remoteDays||[]).indexOf(p[0])!==-1});
       });
+      var remoteCapIn = el("input",{type:"number", min:"1", max:"5", style:"width:64px;", value:String(draft.remoteDaysPerWeek || 2)});
       var remoteRow = state.empDraftRemoteOn ? el("div",{class:"col", style:"gap:6px;"},[
-        el("div",{class:"muted", style:"font-size:12px;"},["체크한 요일엔 이 직원의 와이파이 출근 기록이 없어도 '결근'이 아니라 '재택'으로 자동 표시돼요. 실제로 사무실에 나온 날은 평소처럼 와이파이로 체크하면 그대로 정상 출근 기록이 남아요."]),
+        el("div",{class:"muted", style:"font-size:12px;"},["체크한 요일 중 실제 출근 기록이 없는 날을 '결근'이 아니라 '재택'으로 자동 표시해요. 단, 한 주에 아래 상한 개수까지만 자동으로 재택 처리되고 그 이상은 빈 기록으로 남아서 관리자가 직접 확인할 수 있어요. 실제로 사무실에 나온 날은 평소처럼 와이파이로 체크하면 정상 출근 기록이 남아요."]),
         el("div",{class:"row", style:"flex-wrap:wrap;gap:4px 12px;"}, REMOTE_DAY_OPTS.map(function(p, i){
           return el("label",{class:"checkbox-row", style:"width:auto;"},[remoteDayInputs[i], el("span",{},[p[1]])]);
-        }))
+        })),
+        el("label",{class:"field", style:"max-width:160px;"},["주당 재택 상한(일)", remoteCapIn])
       ]) : null;
       formCard = el("div",{class:"card card-tight", style:"border:1px dashed var(--border);"},[
         el("div",{class:"grid2"},[idIn, nameIn]),
@@ -1613,6 +1669,10 @@
               empObj.remoteDays = state.empDraftRemoteOn
                 ? REMOTE_DAY_OPTS.filter(function(p, i){ return remoteDayInputs[i].checked; }).map(function(p){ return p[0]; })
                 : [];
+              empObj.remoteDaysPerWeek = state.empDraftRemoteOn ? (parseInt(remoteCapIn.value,10) || 2) : (draft.remoteDaysPerWeek || 2);
+              // 저장은 문서 전체를 덮어써서, 관리자가 개별적으로 지운 재택 예외 날짜
+              // (remoteExcluded)를 여기서 안 챙기면 이 폼으로 저장할 때마다 날아가 버린다.
+              empObj.remoteExcluded = draft.remoteExcluded || [];
               adminSaveEmployee(empObj);
             }},["저장"])
           ])
